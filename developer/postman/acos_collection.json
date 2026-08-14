@@ -1,0 +1,60 @@
+{
+  "info": {
+    "name": "ACOS API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Invoices",
+      "item": [
+        {
+          "name": "Create Invoice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organizationId\": \"org_123\",\n  \"customerId\": \"cust_456\",\n  \"invoiceNumber\": \"INV-001\",\n  \"currency\": \"USD\",\n  \"dueDate\": \"2026-09-01T00:00:00Z\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/invoices",
+              "host": ["{{base_url}}"],
+              "path": ["invoices"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Refund Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentId\": \"pay_123\",\n  \"amount\": 50.00\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/payments/refund",
+              "host": ["{{base_url}}"],
+              "path": ["payments", "refund"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

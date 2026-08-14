@@ -1,0 +1,72 @@
+name: ACOS Merchant CI/CD Gate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'products/merchant/**'
+      - 'backend/**'
+      - 'runtime/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  build-and-test:
+    name: Build & Test Validation Gate
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: acos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MERCHANT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/acos?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/acos?schema=public
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Generate Prisma Clients
+        run: |
+          npx prisma generate --schema=backend/prisma/schema.prisma
+
+      - name: Run Database Migrations
+        run: |
+          npx prisma db push --schema=backend/prisma/schema.prisma
+
+      - name: Compile Backend & Dependencies
+        run: |
+          # Compile PaymentSerializer specifically to ensure its compiled output is up to date
+          npx tsc backend/src/infrastructure/persistence/serializers/PaymentSerializer.ts --outDir backend/dist/infrastructure/persistence/serializers --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --esModuleInterop
+          # Build merchant workspace
+          npm run build --workspace=acos-merchant
+
+      - name: Run ACOS Merchant Spec Suites
+        run: |
+          npm run test --workspace=acos-merchant

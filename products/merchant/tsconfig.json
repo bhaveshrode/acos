@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "acos-backend/*": ["../../backend/src/*"],
+      "acos-runtime": ["../../runtime/index.ts"],
+      "acos-runtime/*": ["../../runtime/*"],
+      "acos-platform": ["../../platform/dist/index.js"],
+      "acos-platform/*": ["../../platform/dist/*"],
+      "acos-compliance": ["../../compliance/dist/index.js"],
+      "acos-compliance/*": ["../../compliance/dist/*"],
+      "acos-infrastructure": ["../../infrastructure/dist/index.js"],
+      "acos-infrastructure/*": ["../../infrastructure/dist/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

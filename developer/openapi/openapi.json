@@ -1,0 +1,37 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ACOS Core API",
+    "version": "1.0.0",
+    "description": "API endpoints for the Autonomous Commerce OS"
+  },
+  "servers": [
+    {
+      "url": "https://api.acos.io/v1"
+    }
+  ],
+  "paths": {
+    "/invoices": {
+      "post": {
+        "summary": "Create Invoice",
+        "operationId": "createInvoice",
+        "responses": {
+          "200": {
+            "description": "Invoice created successfully"
+          }
+        }
+      }
+    },
+    "/payments/refund": {
+      "post": {
+        "summary": "Refund Payment",
+        "operationId": "refundPayment",
+        "responses": {
+          "200": {
+            "description": "Payment refunded successfully"
+          }
+        }
+      }
+    }
+  }
+}

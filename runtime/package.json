@@ -1,0 +1,26 @@
+{
+  "name": "acos-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./*": "./*"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "acos-backend": "*",
+    "acos-developer": "*",
+    "acos-intelligence": "*",
+    "acos-platform": "*",
+    "acos-compliance": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.10",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

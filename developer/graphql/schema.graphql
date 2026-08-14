@@ -1,0 +1,36 @@
+type Invoice {
+  id: ID!
+  organizationId: String!
+  customerId: String!
+  invoiceNumber: String!
+  currency: String!
+  grandTotal: Float!
+  status: String!
+}
+
+type PaymentRefund {
+  id: ID!
+  paymentId: String!
+  amount: Float!
+  status: String!
+}
+
+type Query {
+  getInvoice(id: ID!): Invoice
+  getRefund(id: ID!): PaymentRefund
+}
+
+type Mutation {
+  createInvoice(
+    organizationId: String!
+    customerId: String!
+    invoiceNumber: String!
+    currency: String!
+    grandTotal: Float!
+  ): Invoice!
+
+  refundPayment(
+    paymentId: String!
+    amount: Float!
+  ): PaymentRefund!
+}
