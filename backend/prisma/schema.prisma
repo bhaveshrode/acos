@@ -1,0 +1,113 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String        @id
+  email        String        @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     UserSession[]
+  loginAttempts LoginAttempt[]
+}
+
+model UserSession {
+  id           String   @id
+  userId       String
+  refreshToken String
+  expiresAt    DateTime
+  status       String   // ACTIVE, REVOKED, EXPIRED
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LoginAttempt {
+  id         String   @id @default(uuid())
+  userId     String
+  timestamp  DateTime
+  ipAddress  String
+  successful Boolean
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id        String   @id
+  slug      String   @unique
+  name      String
+  currency  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Customer {
+  id             String   @id
+  organizationId String
+  customerNumber String
+  name           String
+  primaryContact String
+  billingAddress String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Invoice {
+  id            String            @id
+  invoiceNumber String            @unique
+  customerId    String
+  organizationId String           @default("default-org-id")
+  status        String            // DRAFT, ISSUED, SENT, PAID, OVERDUE, CANCELLED
+  totalAmount   Float
+  currency      String
+  issuedAt      DateTime?
+  dueDate       DateTime?
+  paidAt        DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  lineItems     InvoiceLineItem[]
+}
+
+model InvoiceLineItem {
+  id          String  @id
+  invoiceId   String
+  description String
+  quantity    Int
+  price       Float
+  amount      Float
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id               String   @id
+  organizationId   String
+  invoiceId        String
+  reference        String
+  amount           Float
+  currency         String
+  status           String
+  gatewayReference String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  statusCode   Int
+  responseBody String
+  createdAt    DateTime @default(now())
+}
+
+model OutboxEvent {
+  id          String    @id @default(uuid())
+  eventType   String
+  payload     String
+  processed   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+}
