@@ -24,6 +24,8 @@ import {
   Invoice,
   InvoiceId,
   InvoiceNumber,
+  issueInvoice as issueInvoiceOperation,
+  recordPayment,
   Money,
   IPaymentRepository,
   Payment,
@@ -731,7 +733,7 @@ export class AcosIntegrationBoundary {
 
     await this.verifyBusinessOwnership(userId, invoice.organizationId.value);
 
-    const issueRes = invoice.issue();
+    const issueRes = issueInvoiceOperation(invoice);
     if (issueRes.isFailure) {
       this.logger.warn("issueInvoice: Aggregate rejected issuing", { error: issueRes.error.message });
       throw new Error(issueRes.error.message);
@@ -972,7 +974,7 @@ export class AcosIntegrationBoundary {
         }
 
         const cumulativeMoney = Money.create(cumulativePaid, invoice.currency).value;
-        const recordRes = invoice.recordPayment(cumulativeMoney);
+        const recordRes = recordPayment(invoice, cumulativeMoney);
         if (recordRes.isFailure) {
           throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
         }

@@ -16,6 +16,8 @@ export * from "./events/InvoicePaid.js";
 export * from "./events/InvoicePartiallyPaid.js";
 export * from "./events/InvoiceUpdated.js";
 export * from "./events/InvoiceVoided.js";
+export * from "./operations/IssueInvoice.js";
+export * from "./operations/RecordPayment.js";
 export * from "./repositories/IInvoiceRepository.js";
 export * from "./services/InvoiceNumberGenerator.js";
 export * from "./services/InvoicePolicy.js";
