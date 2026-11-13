@@ -413,7 +413,10 @@ export class AcosIntegrationBoundary {
     this.outboxRetryTimer = setTimeout(() => {
       this.outboxRetryTimer = null;
       this.outboxRetryAt = 0;
-      void this.processOutboxAsynchronously();
+      // The timer is armed inside a drain pass, so its callback would inherit that
+      // pass's context and be mistaken for a re-entrant publish. Leave the context
+      // first, or the retry is dropped once the arming pass has finished.
+      void this.drainContext.exit(() => this.processOutboxAsynchronously());
     }, Math.max(0, at - Date.now()));
     this.outboxRetryTimer.unref?.();
   }

@@ -615,4 +615,53 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
       await prisma.outboxEvent.deleteMany({ where: { eventType } });
     }
   });
+
+  it("retries a failed delivery from the scheduled timer without another drain call", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const prisma = (boundary as any).prismaClient;
+    const eventType = `acos.outbox.retry_timer_probe.${Date.now()}`;
+    const handler = {
+      handle: async () => {
+        throw new Error("timer probe failure");
+      }
+    };
+    boundary.eventBus.subscribe(eventType, handler as any);
+
+    try {
+      const row = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "timer-probe",
+          payload: JSON.stringify({ metadata: { aggregateId: "timer-probe" }, eventName: eventType }),
+          processed: false
+        }
+      });
+
+      // The first pass arms the retry timer from inside its own drain context.
+      await boundary.processOutboxAsynchronously();
+      const firstAttempt = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(firstAttempt.retryCount).toBe(1);
+
+      // Only the timer can retry from here; no further drain is requested.
+      const deadline = Date.now() + 4_000;
+      let afterTimer = firstAttempt;
+      while (Date.now() < deadline) {
+        afterTimer = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+        if (afterTimer.retryCount >= 2) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(
+        afterTimer.retryCount,
+        "the scheduled retry timer must run its own drain instead of inheriting the pass that armed it"
+      ).toBeGreaterThanOrEqual(2);
+    } finally {
+      boundary.eventBus.unsubscribe(eventType, handler as any);
+      await prisma.outboxEvent.deleteMany({ where: { eventType } });
+    }
+  });
 });

@@ -114,13 +114,13 @@ The release criteria baseline is strictly frozen as follows:
 | **Integration Tests** | 61 | Local Express server (Loopback port 9001) |
 | **Golden E2E Flow** | 1 | Complete signup-to-reconciliation path (Port 9002) |
 | **Failure Tests** | 11 | Infrastructure and network degradation tests (Port 9003) |
-| **Database Tests** | 7 | PostgreSQL required (port 9005); skipped when unreachable |
+| **Database Tests** | 8 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
 | **Broker Tests** | 7 | Redis required (CI service); skipped when unreachable |
 | **Payment Provider Tests** | 17 | Razorpay adapter, signature verification, webhook dispatch and failed initiation against a stubbed gateway; no network |
 | **Razorpay Live Smoke** | 3 | Skipped in the gate. Manual dispatch (`RAZORPAY_SMOKE=1`, test-mode keys) creates and abandons a ₹1 Payment Link against the real API |
 | **Razorpay Inbound E2E** | 1 | Skipped in the gate. Manual dispatch waits for a human to pay a ₹1 test-mode link through a public tunnel, then asserts webhook → CONFIRMED → PAID. Verified once on 2026-11-13 |
-| **Total** | **105** | **All tests must pass cleanly (`105/105 PASS`)** |
+| **Total** | **106** | **All tests must pass cleanly (`106/106 PASS`)** |
 
 ---
 
