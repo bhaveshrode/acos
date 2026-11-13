@@ -28,6 +28,7 @@ import {
   InvoiceId,
   InvoiceNumber,
   issueInvoice as issueInvoiceOperation,
+  markInvoiceSent,
   recordPayment,
   Money,
   IPaymentRepository,
@@ -141,7 +142,6 @@ export class AcosIntegrationBoundary {
 
   // Local metadata registries
   public readonly businessMetadata = new Map<string, { businessType: string; country: string; contactInfo: string }>();
-  public readonly invoiceSentStatus = new Map<string, boolean>(); // Stores sent lifecycle states
 
   constructor(
     private readonly logger: Logger,
@@ -702,14 +702,13 @@ export class AcosIntegrationBoundary {
   // ========================================================
 
   /**
-   * Helper to map an Invoice aggregate to DTO, injecting SENT status if flagged.
+   * Helper to map an Invoice aggregate to DTO, reporting SENT when delivered.
    */
   private mapInvoice(invoice: Invoice): any {
     const mapper = new InvoiceMapper();
     const dto = mapper.map(invoice);
 
-    const isSent = this.invoiceSentStatus.get(invoice.id.value) === true;
-    if (isSent && dto.status === "ISSUED") {
+    if (invoice.sentAt && dto.status === "ISSUED") {
       dto.status = "SENT";
     }
 
@@ -825,20 +824,33 @@ export class AcosIntegrationBoundary {
   public async sendInvoice(userId: string, invoiceId: string): Promise<any> {
     this.logger.info("sendInvoice: Transitioning invoice ISSUED -> SENT...", { userId, invoiceId });
 
-    const invoiceRes = await this.invoiceRepository.findById(new InvoiceId(invoiceId));
-    if (invoiceRes.isFailure) {
-      throw new Error(`Invoice with ID ${invoiceId} not found.`);
-    }
+    const invoice = await this.withinTransaction(async () => {
+      const invoiceRes = await this.invoiceRepository.findById(new InvoiceId(invoiceId));
+      if (invoiceRes.isFailure) {
+        throw new Error(`Invoice with ID ${invoiceId} not found.`);
+      }
 
-    const invoice = invoiceRes.value;
+      const aggregate = invoiceRes.value;
 
-    await this.verifyBusinessOwnership(userId, invoice.organizationId.value);
+      await this.verifyBusinessOwnership(userId, aggregate.organizationId.value);
 
-    if (invoice.status !== "ISSUED") {
-      throw new Error(`Cannot send invoice: State transition from ${invoice.status} to SENT is invalid.`);
-    }
+      if (aggregate.status !== "ISSUED") {
+        throw new Error(`Cannot send invoice: State transition from ${aggregate.status} to SENT is invalid.`);
+      }
 
-    this.invoiceSentStatus.set(invoice.id.value, true);
+      const sentRes = markInvoiceSent(aggregate);
+      if (sentRes.isFailure) {
+        throw new Error(`Invoice rejected sending: ${sentRes.error.message}`);
+      }
+
+      const saveRes = await this.invoiceRepository.save(aggregate);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save invoice aggregate: ${saveRes.error.message}`);
+      }
+
+      return aggregate;
+    });
+
     this.logger.info("sendInvoice: Successfully updated status to SENT.");
 
     return this.mapInvoice(invoice);
@@ -869,7 +881,7 @@ export class AcosIntegrationBoundary {
 
     await this.verifyBusinessOwnership(userId, invoice.organizationId.value);
 
-    const isSent = this.invoiceSentStatus.get(invoice.id.value) === true;
+    const isSent = invoice.sentAt !== null;
     if (!isSent || (invoice.status !== "ISSUED" && invoice.status !== "PARTIALLY_PAID")) {
       throw new Error("Payment request rejected: Payment collection is only allowed on SENT invoices.");
     }
@@ -1178,7 +1190,7 @@ export class AcosIntegrationBoundary {
     let totalCredit = 0;
 
     for (const inv of invoices) {
-      const isSent = this.invoiceSentStatus.get(inv.id.value) === true;
+      const isSent = inv.sentAt !== null;
       if (inv.status === "ISSUED" && isSent) {
         totalOutstanding += inv.grandTotal.amount;
       } else if (inv.status === "PARTIALLY_PAID") {
@@ -1225,8 +1237,8 @@ export class AcosIntegrationBoundary {
       totalCount: invoices.length,
       totalAmount: invoices.reduce((sum, inv) => sum + inv.grandTotal.amount, 0),
       draftCount: invoices.filter(inv => inv.status === "DRAFT").length,
-      issuedCount: invoices.filter(inv => inv.status === "ISSUED" && this.invoiceSentStatus.get(inv.id.value) !== true).length,
-      sentCount: invoices.filter(inv => inv.status === "ISSUED" && this.invoiceSentStatus.get(inv.id.value) === true).length,
+      issuedCount: invoices.filter(inv => inv.status === "ISSUED" && inv.sentAt === null).length,
+      sentCount: invoices.filter(inv => inv.status === "ISSUED" && inv.sentAt !== null).length,
       partiallyPaidCount: invoices.filter(inv => inv.status === "PARTIALLY_PAID").length,
       paidCount: invoices.filter(inv => inv.status === "PAID").length,
       overpaidCount: invoices.filter(inv => inv.status === "OVERPAID").length

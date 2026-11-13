@@ -18,6 +18,7 @@ export class InvoiceMapper implements IMapper<Invoice, InvoiceResponseDto> {
       paymentTerms: source.paymentTerms.value,
       issueDate: source.issueDate.toISOString(),
       dueDate: source.dueDate.value.toISOString(),
+      sentAt: source.sentAt ? source.sentAt.toISOString() : null,
       subtotal: source.subtotal.amount,
       taxTotal: source.taxTotal.amount,
       discountTotal: source.discountTotal.amount,

@@ -17,6 +17,7 @@ export class InvoiceSerializer {
       paymentTerms: aggregate.paymentTerms.value,
       issueDate: aggregate.issueDate,
       dueDate: aggregate.dueDate.value,
+      sentAt: aggregate.sentAt,
       lines: aggregate.lines.map((l) => ({
         id: l.id.value,
         description: l.description,

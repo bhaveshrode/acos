@@ -61,6 +61,7 @@ export class InvoiceDeserializer {
       paymentTerms: PaymentTerms.create(snapshot.paymentTerms as PaymentTermType).value,
       issueDate: snapshot.issueDate,
       dueDate: DueDate.create(snapshot.dueDate).value,
+      sentAt: snapshot.sentAt ?? null,
       lines,
       notes,
       discount: snapshot.discount

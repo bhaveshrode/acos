@@ -40,6 +40,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         paymentTerms: "NET_30",
         issueDate: row.issuedAt || new Date(),
         dueDate: row.dueDate || new Date(),
+        sentAt: row.sentAt ?? null,
         subtotal: row.totalAmount.toNumber(),
         taxTotal: 0,
         discountTotal: 0,
@@ -85,6 +86,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         paymentTerms: "NET_30",
         issueDate: row.issuedAt || new Date(),
         dueDate: row.dueDate || new Date(),
+        sentAt: row.sentAt ?? null,
         subtotal: row.totalAmount.toNumber(),
         taxTotal: 0,
         discountTotal: 0,
@@ -129,6 +131,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
           paymentTerms: "NET_30",
           issueDate: row.issuedAt || new Date(),
           dueDate: row.dueDate || new Date(),
+          sentAt: row.sentAt ?? null,
           subtotal: row.totalAmount.toNumber(),
           taxTotal: 0,
           discountTotal: 0,
@@ -174,6 +177,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
           paymentTerms: "NET_30",
           issueDate: row.issuedAt || new Date(),
           dueDate: row.dueDate || new Date(),
+          sentAt: row.sentAt ?? null,
           subtotal: row.totalAmount.toNumber(),
           taxTotal: 0,
           discountTotal: 0,
@@ -245,7 +249,8 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         totalAmount: inv.grandTotal,
         currency: inv.currency,
         issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
-        dueDate: inv.dueDate ? new Date(inv.dueDate) : null
+        dueDate: inv.dueDate ? new Date(inv.dueDate) : null,
+        sentAt: inv.sentAt ? new Date(inv.sentAt) : null,
       },
       update: {
         customerId: inv.customerId,
@@ -254,7 +259,8 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         totalAmount: inv.grandTotal,
         currency: inv.currency,
         issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
-        dueDate: inv.dueDate ? new Date(inv.dueDate) : null
+        dueDate: inv.dueDate ? new Date(inv.dueDate) : null,
+        sentAt: inv.sentAt ? new Date(inv.sentAt) : null,
       }
     });
 

@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "../..");
 const repoRoot = join(here, "../../..");
 
-const SURFACE_SIZE = 376;
+const SURFACE_SIZE = 377;
 const APPLICATION_SIZE = 29;
 const ALLOWED_SUBPATHS = ["application"];
 const ENTRY_FILES = ["index.ts", "application.ts"];
@@ -71,6 +71,7 @@ describe("kernel surface conformance", () => {
     expect(kernel.Money).toBeTypeOf("function");
     expect(kernel.SettlementTransactionHash).toBeTypeOf("function");
     expect(kernel.issueInvoice).toBeTypeOf("function");
+    expect(kernel.markInvoiceSent).toBeTypeOf("function");
     expect(kernel.recordPayment).toBeTypeOf("function");
     expect(kernel.submitPayment).toBeTypeOf("function");
     expect(kernel.startPaymentProcessing).toBeTypeOf("function");

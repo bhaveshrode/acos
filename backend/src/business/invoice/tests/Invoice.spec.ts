@@ -73,6 +73,53 @@ describe("Invoice Bounded Context Unit Tests (Tasks 14.2 - 14.5)", () => {
       expect(invoice.lines).toHaveLength(0);
     });
 
+    it("should record the first delivery timestamp and keep it on re-send", () => {
+      const invoice = Invoice.create(
+        InvoiceId.generate(),
+        orgId,
+        custId,
+        invNumber,
+        "USD",
+        payTerms,
+        issueDate,
+        dueDate
+      ).value;
+
+      invoice.addLineItem(
+        new UniqueEntityID(),
+        "Development Services",
+        Quantity.create(1).value,
+        UnitPrice.create(Money.create(10, "USD").value).value,
+        TaxRate.create(0).value
+      );
+
+      expect(invoice.issue().isSuccess).toBe(true);
+      expect(invoice.sentAt).toBeNull();
+
+      const firstSentAt = new Date("2027-01-01T00:00:00Z");
+      expect(invoice.markSent(firstSentAt).isSuccess).toBe(true);
+      expect(invoice.sentAt).toEqual(firstSentAt);
+
+      expect(invoice.markSent(new Date("2027-02-01T00:00:00Z")).isSuccess).toBe(true);
+      expect(invoice.sentAt).toEqual(firstSentAt);
+    });
+
+    it("should refuse to mark a draft invoice as sent", () => {
+      const invoice = Invoice.create(
+        InvoiceId.generate(),
+        orgId,
+        custId,
+        invNumber,
+        "USD",
+        payTerms,
+        issueDate,
+        dueDate
+      ).value;
+
+      expect(invoice.markSent().isFailure).toBe(true);
+      expect(invoice.sentAt).toBeNull();
+    });
+
     it("should recalculate subtotal, taxes, and grand totals upon adding line items", () => {
       const invoice = Invoice.create(
         InvoiceId.generate(),

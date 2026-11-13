@@ -66,6 +66,7 @@ model Invoice {
   currency      String
   issuedAt      DateTime?
   dueDate       DateTime?
+  sentAt        DateTime?
   paidAt        DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

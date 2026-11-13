@@ -51,6 +51,7 @@ export interface InvoiceProps {
   paymentTerms: PaymentTerms;
   issueDate: Date;
   dueDate: DueDate;
+  sentAt: Date | null;
   lines: Map<string, InvoiceLine>;
   notes: Map<string, InvoiceNote>;
   discount: Discount | null;
@@ -90,6 +91,7 @@ export class Invoice extends AggregateRoot<InvoiceId> {
       type?: InvoiceType;
       discount?: Discount;
       period?: InvoicePeriod;
+      sentAt?: Date | null;
       createdAt?: Date;
       updatedAt?: Date;
     }
@@ -113,6 +115,7 @@ export class Invoice extends AggregateRoot<InvoiceId> {
       paymentTerms,
       issueDate,
       dueDate,
+      sentAt: optional?.sentAt ?? null,
       lines: new Map(),
       notes: new Map(),
       discount: optional?.discount || null,
@@ -140,6 +143,7 @@ export class Invoice extends AggregateRoot<InvoiceId> {
   public get paymentTerms(): PaymentTerms { return this.props.paymentTerms; }
   public get issueDate(): Date { return this.props.issueDate; }
   public get dueDate(): DueDate { return this.props.dueDate; }
+  public get sentAt(): Date | null { return this.props.sentAt; }
   public get lines(): readonly InvoiceLine[] { return Object.freeze(Array.from(this.props.lines.values())); }
   public get notes(): readonly InvoiceNote[] { return Object.freeze(Array.from(this.props.notes.values())); }
   public get discount(): Discount | null { return this.props.discount; }
@@ -271,6 +275,25 @@ export class Invoice extends AggregateRoot<InvoiceId> {
     this.props.updatedAt = new Date();
 
     this.addDomainEvent(new InvoiceIssued(this.id.value));
+    return Result.ok();
+  }
+
+  /**
+   * Records first delivery to the customer. Re-sending keeps the original timestamp.
+   */
+  public markSent(sentAt: Date = new Date()): Result<void> {
+    if (this.status === InvoiceStatus.DRAFT) {
+      return Result.fail(ResultError.conflict("Cannot send a draft invoice."));
+    }
+    if (this.status === InvoiceStatus.VOID || this.status === InvoiceStatus.CANCELLED) {
+      return Result.fail(ResultError.conflict("Cannot send a voided or cancelled invoice."));
+    }
+
+    if (!this.props.sentAt) {
+      this.props.sentAt = sentAt;
+      this.props.updatedAt = new Date();
+    }
+
     return Result.ok();
   }
 

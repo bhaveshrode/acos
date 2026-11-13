@@ -12,6 +12,7 @@ export interface InvoiceSnapshot {
   paymentTerms: string;
   issueDate: Date;
   dueDate: Date;
+  sentAt: Date | null;
   lines: Array<{
     id: string;
     description: string;

@@ -151,6 +151,9 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const sentInvoice = await frontend.getInvoice(invoice.id);
     expect(sentInvoice.status).toBe("SENT");
 
+    const sentRow = await prisma.invoice.findUnique({ where: { id: invoice.id } });
+    expect(sentRow.sentAt).toBeInstanceOf(Date);
+
     // 6. Collect Payment and process webhook (checks Payment & OutboxEvent & IdempotencyRecord tables)
     const payment = await frontend.collectPayment(invoice.id);
     expect(payment.amount).toBe(100);
