@@ -88,6 +88,7 @@ import {
 } from "acos-backend/application";
 
 import { OutboxEventBus } from "./OutboxEventBus.js";
+import type { PrismaBusinessProfileRepository } from "./prisma/PrismaBusinessProfileRepository.js";
 import { TransactionScope } from "../adapters/transactions/scopes/TransactionScope.js";
 import { AcosPasswordHasher } from "./AcosPasswordHasher.js";
 import {
@@ -127,6 +128,7 @@ export class AcosIntegrationBoundary {
   public invoiceRepository: IInvoiceRepository = new MockInvoiceRepository();
   public paymentRepository: IPaymentRepository = new MockPaymentRepository();
   public accountsReceivableRepository: IAccountsReceivableRepository = new MockAccountsReceivableRepository();
+  public businessProfileRepository: PrismaBusinessProfileRepository | null = null;
   public readonly passwordHasher = new AcosPasswordHasher();
   public readonly jwtProvider = new JwtTokenProvider("acos-secret-key-123456789-super-long-required-signing-key");
   private readonly authService = new AuthenticationService(this.passwordHasher);
@@ -139,7 +141,7 @@ export class AcosIntegrationBoundary {
   // Sandbox provider context
   public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
 
-  // Local metadata registries
+  // Mock-mode metadata registry: the persistent context reads BusinessProfile rows instead.
   public readonly businessMetadata = new Map<string, { businessType: string; country: string; contactInfo: string }>();
 
   constructor(
@@ -265,13 +267,15 @@ export class AcosIntegrationBoundary {
           PrismaCustomerRepository,
           PrismaInvoiceRepository,
           PrismaPaymentRepository,
-          PrismaAccountsReceivableRepository
+          PrismaAccountsReceivableRepository,
+          PrismaBusinessProfileRepository
         } = await import("./PrismaRepositories.js");
 
         this.prismaClient = prismaClient;
 
         this.userRepository = new PrismaUserRepository(prismaClient) as any;
         this.organizationRepository = new PrismaOrganizationRepository(prismaClient) as any;
+        this.businessProfileRepository = new PrismaBusinessProfileRepository(prismaClient);
         this.customerRepository = new PrismaCustomerRepository(prismaClient) as any;
         this.invoiceRepository = new PrismaInvoiceRepository(prismaClient) as any;
         this.paymentRepository = new PrismaPaymentRepository(prismaClient) as any;
@@ -577,11 +581,20 @@ export class AcosIntegrationBoundary {
 
     const orgDto = result.value;
 
-    this.businessMetadata.set(orgDto.id, {
-      businessType,
-      country,
-      contactInfo
-    });
+    if (this.businessProfileRepository) {
+      await this.businessProfileRepository.save({
+        organizationId: orgDto.id,
+        businessType,
+        country,
+        contactInfo
+      });
+    } else {
+      this.businessMetadata.set(orgDto.id, {
+        businessType,
+        country,
+        contactInfo
+      });
+    }
 
     this.logger.info("onboardBusiness: Business onboarding succeeded.", { businessId: orgDto.id });
     return {
@@ -607,13 +620,9 @@ export class AcosIntegrationBoundary {
         }
       }
     } else {
-      const { PrismaOrganizationRepository } = await import("./PrismaRepositories.js");
-      const orgId = PrismaOrganizationRepository.ownerMap.get(userId);
-      if (orgId) {
-        const orgRes = await this.organizationRepository.findById(new OrganizationId(orgId));
-        if (orgRes.isSuccess) {
-          ownerOrg = orgRes.value;
-        }
+      const orgRes = await this.organizationRepository.findByOwner(new UserId(userId));
+      if (orgRes.isSuccess) {
+        ownerOrg = orgRes.value;
       }
     }
 
@@ -625,16 +634,34 @@ export class AcosIntegrationBoundary {
     const orgMapper = new OrganizationMapper();
     const orgDto = orgMapper.map(ownerOrg);
 
-    const metadata = this.businessMetadata.get(orgDto.id) ?? {
-      businessType: "Unknown",
-      country: "Unknown",
-      contactInfo: "Unknown"
-    };
+    const metadata = await this.resolveBusinessMetadata(orgDto.id);
 
     return {
       ...orgDto,
       ...metadata
     };
+  }
+
+  private async resolveBusinessMetadata(
+    organizationId: string
+  ): Promise<{ businessType: string; country: string; contactInfo: string }> {
+    if (this.businessProfileRepository) {
+      const profile = await this.businessProfileRepository.findByOrganization(organizationId);
+      if (profile) {
+        return {
+          businessType: profile.businessType,
+          country: profile.country,
+          contactInfo: profile.contactInfo
+        };
+      }
+    } else {
+      const cached = this.businessMetadata.get(organizationId);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    return { businessType: "Unknown", country: "Unknown", contactInfo: "Unknown" };
   }
 
   // ========================================================

@@ -1,6 +1,7 @@
 import { Organization } from "../aggregates/Organization.js";
 import { OrganizationId } from "../value-objects/OrganizationId.js";
 import { OrganizationSlug } from "../value-objects/OrganizationSlug.js";
+import { UserId } from "../../identity/value-objects/UserId.js";
 import { Result } from "../../../foundation/result/Result.js";
 
 /**
@@ -16,6 +17,11 @@ export interface IOrganizationRepository {
    * Retrieves an Organization by its unique slug identifier.
    */
   findBySlug(slug: OrganizationSlug): Promise<Result<Organization>>;
+
+  /**
+   * Retrieves the Organization owned by the given user.
+   */
+  findByOwner(userId: UserId): Promise<Result<Organization>>;
 
   /**
    * Saves or updates an Organization aggregate in database.
