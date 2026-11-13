@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy"
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate:dev": "prisma migrate dev"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",
