@@ -1,8 +1,8 @@
 import crypto from "crypto";
 import express from "express";
 import { AsyncLocalStorage } from "async_hooks";
-import { Logger, LogWriter } from "../../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../../backend/src/foundation/logging/LogEntry.js";
+import { Logger, LogEntry } from "acos-backend";
+import type { LogWriter } from "acos-backend";
 import { MerchantConfig } from "../configuration/MerchantConfig.js";
 
 export const correlationLocalStorage = new AsyncLocalStorage<string>();
