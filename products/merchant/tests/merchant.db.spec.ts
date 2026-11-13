@@ -84,6 +84,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const email = `db_valid_${Date.now()}@example.com`;
     const password = "password123";
     const name = "DB Hardened Merchant";
+    const prisma = (boundary as any).prismaClient;
 
     const user = await frontend.signUp(email, password, name);
     expect(user.email).toBe(email);
@@ -130,7 +131,22 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     });
     expect(invoice.status).toBe("DRAFT");
 
+    // Creation commits its domain event through the transactional outbox
+    const createdEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "InvoiceCreated", aggregateId: invoice.id }
+    });
+    expect(createdEvt).toBeDefined();
+    expect(createdEvt.eventId).toBeTruthy();
+    expect(createdEvt.processed).toBe(true);
+
     await frontend.issueInvoice(invoice.id);
+
+    const issuedEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "InvoiceIssued", aggregateId: invoice.id }
+    });
+    expect(issuedEvt).toBeDefined();
+    expect(issuedEvt.processed).toBe(true);
+
     await frontend.sendInvoice(invoice.id);
     const sentInvoice = await frontend.getInvoice(invoice.id);
     expect(sentInvoice.status).toBe("SENT");
@@ -140,7 +156,6 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(payment.amount).toBe(100);
 
     // Find payment record in DB to get gateway reference
-    const prisma = (boundary as any).prismaClient;
     const dbPayment = await prisma.payment.findFirst({
       where: { invoiceId: invoice.id }
     });

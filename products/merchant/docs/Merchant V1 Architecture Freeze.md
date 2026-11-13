@@ -84,8 +84,8 @@ The persistence layer supports two execution contexts:
 
 ## 7. Event & Outbox Architecture
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
-1. When mutations generate domain events, `OutboxEventBus` writes them to the `OutboxEvent` database table.
-2. The asynchronous outbox background processor (`processOutboxAsynchronously`) polls the table sequentially, publishes events to the raw Event Bus, and marks records as processed in PostgreSQL.
+1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
+2. The boundary wraps invoice creation/issuing (and payment submission) in a PostgreSQL transaction via `TransactionScope`. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
 
 ---
 

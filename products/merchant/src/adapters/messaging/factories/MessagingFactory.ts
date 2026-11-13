@@ -3,9 +3,6 @@ import { InMemoryEventBus } from "../event-bus/InMemoryEventBus.js";
 import { DomainEventPublisher } from "../publishers/DomainEventPublisher.js";
 import { IntegrationEventPublisher } from "../publishers/IntegrationEventPublisher.js";
 import { EventSubscriberRegistry } from "../subscribers/EventSubscriberRegistry.js";
-import { OutboxService } from "../outbox/OutboxService.js";
-import { OutboxProcessor } from "../outbox/OutboxProcessor.js";
-import { RepositoryContext } from "../../repositories/base/RepositoryContext.js";
 
 /**
  * Factory class coordinating creation of local event buses, publishers, and workers.
@@ -48,22 +45,5 @@ export class MessagingFactory {
     eventBus: IEventBus = this.getEventBus()
   ): EventSubscriberRegistry {
     return new EventSubscriberRegistry(eventBus);
-  }
-
-  /**
-   * Instantiates a new OutboxService.
-   */
-  public static createOutboxService(context: RepositoryContext): OutboxService {
-    return new OutboxService(context);
-  }
-
-  /**
-   * Instantiates a new OutboxProcessor.
-   */
-  public static createOutboxProcessor(
-    context: RepositoryContext,
-    eventBus: IEventBus = this.getEventBus()
-  ): OutboxProcessor {
-    return new OutboxProcessor(context, eventBus);
   }
 }
