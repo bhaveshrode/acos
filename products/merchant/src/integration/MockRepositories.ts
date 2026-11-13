@@ -1,34 +1,31 @@
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IUserRepository } from "acos-backend/business/identity/repositories/IUserRepository.js";
-import { User } from "acos-backend/business/identity/aggregates/User.js";
-import { UserId } from "acos-backend/business/identity/value-objects/UserId.js";
-import { Email } from "acos-backend/business/identity/value-objects/Email.js";
-
-import { IOrganizationRepository } from "acos-backend/business/organization/repositories/IOrganizationRepository.js";
-import { Organization } from "acos-backend/business/organization/aggregates/Organization.js";
-import { OrganizationId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { OrganizationSlug } from "acos-backend/business/organization/value-objects/OrganizationSlug.js";
-
-import { ICustomerRepository } from "acos-backend/business/customer/repositories/ICustomerRepository.js";
-import { Customer } from "acos-backend/business/customer/aggregates/Customer.js";
-import { CustomerId } from "acos-backend/business/customer/value-objects/CustomerId.js";
-import { CustomerNumber } from "acos-backend/business/customer/value-objects/CustomerNumber.js";
-
-import { IInvoiceRepository } from "acos-backend/business/invoice/repositories/IInvoiceRepository.js";
-import { Invoice } from "acos-backend/business/invoice/aggregates/Invoice.js";
-import { InvoiceId } from "acos-backend/business/invoice/value-objects/InvoiceId.js";
-import { InvoiceNumber } from "acos-backend/business/invoice/value-objects/InvoiceNumber.js";
-
-import { IPaymentRepository } from "acos-backend/business/payment/repositories/IPaymentRepository.js";
-import { Payment } from "acos-backend/business/payment/aggregates/Payment.js";
-import { PaymentId } from "acos-backend/business/payment/value-objects/PaymentId.js";
-import { PaymentReference } from "acos-backend/business/payment/value-objects/PaymentReference.js";
-import { TransactionHash } from "acos-backend/business/payment/value-objects/TransactionHash.js";
-
-import { IAccountsReceivableRepository } from "acos-backend/business/accounts_receivable/repositories/IAccountsReceivableRepository.js";
-import { AccountsReceivable } from "acos-backend/business/accounts_receivable/aggregates/AccountsReceivable.js";
-import { ReceivableAccountId } from "acos-backend/business/accounts_receivable/value-objects/ReceivableAccountId.js";
+import {
+  Result,
+  ResultError,
+  IUserRepository,
+  User,
+  UserId,
+  Email,
+  IOrganizationRepository,
+  Organization,
+  OrganizationId,
+  OrganizationSlug,
+  ICustomerRepository,
+  Customer,
+  CustomerId,
+  CustomerNumber,
+  IInvoiceRepository,
+  Invoice,
+  InvoiceId,
+  InvoiceNumber,
+  IPaymentRepository,
+  Payment,
+  PaymentId,
+  PaymentReference,
+  TransactionHash,
+  IAccountsReceivableRepository,
+  AccountsReceivable,
+  ReceivableAccountId
+} from "acos-backend";
 
 /**
  * In-memory repository implementation of IUserRepository.

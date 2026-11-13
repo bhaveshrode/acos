@@ -1,86 +1,82 @@
 import bcrypt from "bcryptjs";
 import { ACOSRuntime } from "acos-runtime";
-import { Logger } from "acos-backend/foundation/logging/Logger.js";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IPasswordHasher } from "acos-backend/foundation/contracts/security/IPasswordHasher.js";
-import { PasswordHasher } from "acos-backend/presentation/authentication/PasswordHasher.js";
-import { IUserRepository } from "acos-backend/business/identity/repositories/IUserRepository.js";
-import { User } from "acos-backend/business/identity/aggregates/User.js";
-import { UserId } from "acos-backend/business/identity/value-objects/UserId.js";
-import { Email } from "acos-backend/business/identity/value-objects/Email.js";
-import { SessionId } from "acos-backend/business/identity/value-objects/SessionId.js";
-import { AuthenticationService } from "acos-backend/business/identity/services/AuthenticationService.js";
-import { JwtTokenProvider } from "acos-backend/presentation/authentication/JwtTokenProvider.js";
-import { RegisterUserCommand } from "acos-backend/application/identity/commands/RegisterUserCommand.js";
-import { RegisterUserCommandHandler } from "acos-backend/application/identity/handlers/RegisterUserCommandHandler.js";
-import { UserMapper } from "acos-backend/application/identity/mapping/UserMapper.js";
-import { Mediator } from "acos-backend/application/foundation/pipeline/Mediator.js";
-import { UniqueEntityID } from "acos-backend/foundation/core/Identifier.js";
-
-// Organization Imports
-import { IOrganizationRepository } from "acos-backend/business/organization/repositories/IOrganizationRepository.js";
-import { Organization } from "acos-backend/business/organization/aggregates/Organization.js";
-import { OrganizationId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { OrganizationSlug } from "acos-backend/business/organization/value-objects/OrganizationSlug.js";
-import { CreateOrganizationCommand } from "acos-backend/application/organization/commands/CreateOrganizationCommand.js";
-import { CreateOrganizationCommandHandler } from "acos-backend/application/organization/handlers/CreateOrganizationCommandHandler.js";
-import { GetOrganizationByIdQuery } from "acos-backend/application/organization/queries/GetOrganizationByIdQuery.js";
-import { GetOrganizationByIdQueryHandler } from "acos-backend/application/organization/handlers/GetOrganizationByIdQueryHandler.js";
-import { OrganizationMapper } from "acos-backend/application/organization/mapping/OrganizationMapper.js";
-
-// Customer Imports
-import { ICustomerRepository } from "acos-backend/business/customer/repositories/ICustomerRepository.js";
-import { Customer } from "acos-backend/business/customer/aggregates/Customer.js";
-import { CustomerId } from "acos-backend/business/customer/value-objects/CustomerId.js";
-import { CustomerNumber } from "acos-backend/business/customer/value-objects/CustomerNumber.js";
-import { CreateCustomerCommand } from "acos-backend/application/customer/commands/CreateCustomerCommand.js";
-import { CreateCustomerCommandHandler } from "acos-backend/application/customer/handlers/CreateCustomerCommandHandler.js";
-import { GetCustomerByIdQuery } from "acos-backend/application/customer/queries/GetCustomerByIdQuery.js";
-import { GetCustomerByIdQueryHandler } from "acos-backend/application/customer/handlers/GetCustomerByIdQueryHandler.js";
-import { CustomerMapper } from "acos-backend/application/customer/mapping/CustomerMapper.js";
-
-// Invoice Imports
-import { IInvoiceRepository } from "acos-backend/business/invoice/repositories/IInvoiceRepository.js";
-import { Invoice } from "acos-backend/business/invoice/aggregates/Invoice.js";
-import { InvoiceId } from "acos-backend/business/invoice/value-objects/InvoiceId.js";
-import { InvoiceNumber } from "acos-backend/business/invoice/value-objects/InvoiceNumber.js";
-import { CreateInvoiceCommand } from "acos-backend/application/invoice/commands/CreateInvoiceCommand.js";
-import { CreateInvoiceCommandHandler } from "acos-backend/application/invoice/handlers/CreateInvoiceCommandHandler.js";
-import { GetInvoiceByIdQuery } from "acos-backend/application/invoice/queries/GetInvoiceByIdQuery.js";
-import { GetInvoiceByIdQueryHandler } from "acos-backend/application/invoice/handlers/GetInvoiceByIdQueryHandler.js";
-import { InvoiceMapper } from "acos-backend/application/invoice/mapping/InvoiceMapper.js";
-import { Money } from "acos-backend/business/invoice/value-objects/Money.js";
-
-// Payment Imports
-import { IPaymentRepository } from "acos-backend/business/payment/repositories/IPaymentRepository.js";
-import { Payment } from "acos-backend/business/payment/aggregates/Payment.js";
-import { PaymentId } from "acos-backend/business/payment/value-objects/PaymentId.js";
-import { PaymentReference } from "acos-backend/business/payment/value-objects/PaymentReference.js";
-import { TransactionHash } from "acos-backend/business/payment/value-objects/TransactionHash.js";
-import { GatewayReference } from "acos-backend/business/payment/value-objects/GatewayReference.js";
-import { ConfirmationCount } from "acos-backend/business/payment/value-objects/ConfirmationCount.js";
-import { SubmitPaymentCommand } from "acos-backend/application/payment/commands/SubmitPaymentCommand.js";
-import { SubmitPaymentCommandHandler } from "acos-backend/application/payment/handlers/SubmitPaymentCommandHandler.js";
-import { GetPaymentByIdQuery } from "acos-backend/application/payment/queries/GetPaymentByIdQuery.js";
-import { GetPaymentByIdQueryHandler } from "acos-backend/application/payment/handlers/GetPaymentByIdQueryHandler.js";
-import { PaymentMapper } from "acos-backend/application/payment/mapping/PaymentMapper.js";
-
-// Accounts Receivable Imports (Phase 6)
-import { IAccountsReceivableRepository } from "acos-backend/business/accounts_receivable/repositories/IAccountsReceivableRepository.js";
-import { AccountsReceivable } from "acos-backend/business/accounts_receivable/aggregates/AccountsReceivable.js";
-import { ReceivableAccountId } from "acos-backend/business/accounts_receivable/value-objects/ReceivableAccountId.js";
-import { SettlementId } from "acos-backend/business/settlement/value-objects/SettlementId.js";
-import { CreditAllocationPolicy } from "acos-backend/business/accounts_receivable/services/CreditAllocationPolicy.js";
-import { RecordReceivableCommand } from "acos-backend/application/accounts_receivable/commands/RecordReceivableCommand.js";
-import { RecordReceivableCommandHandler } from "acos-backend/application/accounts_receivable/handlers/RecordReceivableCommandHandler.js";
-import { GetReceivableByIdQuery } from "acos-backend/application/accounts_receivable/queries/GetReceivableByIdQuery.js";
-import { GetReceivableByIdQueryHandler } from "acos-backend/application/accounts_receivable/handlers/GetReceivableByIdQueryHandler.js";
-import { ReceivableMapper } from "acos-backend/application/accounts_receivable/mapping/ReceivableMapper.js";
-import { MessagingFactory } from "acos-backend/infrastructure/messaging/factories/MessagingFactory.js";
-import { IEventBus } from "acos-backend/foundation/events/EventBus.js";
-import { IDomainEvent } from "acos-backend/foundation/events/DomainEvent.js";
-import { IEventHandler } from "acos-backend/foundation/events/EventHandler.js";
+import {
+  Logger,
+  Result,
+  ResultError,
+  IPasswordHasher,
+  IUserRepository,
+  User,
+  UserId,
+  Email,
+  SessionId,
+  AuthenticationService,
+  UniqueEntityID,
+  IOrganizationRepository,
+  Organization,
+  OrganizationId,
+  OrganizationSlug,
+  ICustomerRepository,
+  Customer,
+  CustomerId,
+  CustomerNumber,
+  IInvoiceRepository,
+  Invoice,
+  InvoiceId,
+  InvoiceNumber,
+  Money,
+  IPaymentRepository,
+  Payment,
+  PaymentId,
+  PaymentReference,
+  TransactionHash,
+  GatewayReference,
+  ConfirmationCount,
+  IAccountsReceivableRepository,
+  AccountsReceivable,
+  ReceivableAccountId,
+  SettlementId,
+  CreditAllocationPolicy,
+  IEventBus,
+  IDomainEvent,
+  IEventHandler
+} from "acos-backend";
+import {
+  PasswordHasher,
+  JwtTokenProvider,
+  MessagingFactory
+} from "acos-backend/adapters";
+import {
+  RegisterUserCommand,
+  RegisterUserCommandHandler,
+  UserMapper,
+  Mediator,
+  CreateOrganizationCommand,
+  CreateOrganizationCommandHandler,
+  GetOrganizationByIdQuery,
+  GetOrganizationByIdQueryHandler,
+  OrganizationMapper,
+  CreateCustomerCommand,
+  CreateCustomerCommandHandler,
+  GetCustomerByIdQuery,
+  GetCustomerByIdQueryHandler,
+  CustomerMapper,
+  CreateInvoiceCommand,
+  CreateInvoiceCommandHandler,
+  GetInvoiceByIdQuery,
+  GetInvoiceByIdQueryHandler,
+  InvoiceMapper,
+  SubmitPaymentCommand,
+  SubmitPaymentCommandHandler,
+  GetPaymentByIdQuery,
+  GetPaymentByIdQueryHandler,
+  PaymentMapper,
+  RecordReceivableCommand,
+  RecordReceivableCommandHandler,
+  GetReceivableByIdQuery,
+  GetReceivableByIdQueryHandler,
+  ReceivableMapper
+} from "acos-backend/application";
 
 import { OutboxEventBus } from "./OutboxEventBus.js";
 import { AcosPasswordHasher } from "./AcosPasswordHasher.js";

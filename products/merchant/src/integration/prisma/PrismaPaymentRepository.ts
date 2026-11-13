@@ -1,15 +1,19 @@
 import { PrismaClient } from "@prisma/client";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IPaymentRepository } from "acos-backend/business/payment/repositories/IPaymentRepository.js";
-import { Payment } from "acos-backend/business/payment/aggregates/Payment.js";
-import { PaymentId } from "acos-backend/business/payment/value-objects/PaymentId.js";
-import { PaymentReference } from "acos-backend/business/payment/value-objects/PaymentReference.js";
-import { TransactionHash } from "acos-backend/business/payment/value-objects/TransactionHash.js";
-import { OrganizationId as OrgId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { InvoiceId as InvId } from "acos-backend/business/invoice/value-objects/InvoiceId.js";
-import { PaymentSerializer } from "acos-backend/infrastructure/persistence/serializers/PaymentSerializer.js";
-import { PaymentHydrator } from "acos-backend/infrastructure/persistence/hydrators/PaymentHydrator.js";
+import {
+  Result,
+  ResultError,
+  IPaymentRepository,
+  Payment,
+  PaymentId,
+  PaymentReference,
+  TransactionHash,
+  OrganizationId as OrgId,
+  InvoiceId as InvId
+} from "acos-backend";
+import {
+  PaymentSerializer,
+  PaymentHydrator
+} from "acos-backend/adapters";
 
 export class PrismaPaymentRepository implements IPaymentRepository {
   constructor(private prisma: PrismaClient) {}

@@ -1,14 +1,18 @@
 import { PrismaClient } from "@prisma/client";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IInvoiceRepository } from "acos-backend/business/invoice/repositories/IInvoiceRepository.js";
-import { Invoice } from "acos-backend/business/invoice/aggregates/Invoice.js";
-import { InvoiceId } from "acos-backend/business/invoice/value-objects/InvoiceId.js";
-import { InvoiceNumber } from "acos-backend/business/invoice/value-objects/InvoiceNumber.js";
-import { OrganizationId as OrgId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { CustomerId } from "acos-backend/business/customer/value-objects/CustomerId.js";
-import { InvoiceExtractor } from "acos-backend/infrastructure/persistence/extractors/InvoiceExtractor.js";
-import { InvoiceHydrator } from "acos-backend/infrastructure/persistence/hydrators/InvoiceHydrator.js";
+import {
+  Result,
+  ResultError,
+  IInvoiceRepository,
+  Invoice,
+  InvoiceId,
+  InvoiceNumber,
+  OrganizationId as OrgId,
+  CustomerId
+} from "acos-backend";
+import {
+  InvoiceExtractor,
+  InvoiceHydrator
+} from "acos-backend/adapters";
 
 export class PrismaInvoiceRepository implements IInvoiceRepository {
   constructor(private prisma: PrismaClient) {}

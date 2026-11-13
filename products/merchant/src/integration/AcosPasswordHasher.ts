@@ -1,7 +1,9 @@
 import bcrypt from "bcryptjs";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IPasswordHasher } from "acos-backend/foundation/contracts/security/IPasswordHasher.js";
+import {
+  Result,
+  ResultError,
+  IPasswordHasher
+} from "acos-backend";
 
 /**
  * Adapter implementing the IPasswordHasher domain contract using the secure bcrypt hashing.

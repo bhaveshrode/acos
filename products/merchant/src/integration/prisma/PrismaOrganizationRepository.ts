@@ -1,12 +1,16 @@
 import { PrismaClient } from "@prisma/client";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IOrganizationRepository } from "acos-backend/business/organization/repositories/IOrganizationRepository.js";
-import { Organization } from "acos-backend/business/organization/aggregates/Organization.js";
-import { OrganizationId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { OrganizationSlug } from "acos-backend/business/organization/value-objects/OrganizationSlug.js";
-import { OrganizationSerializer } from "acos-backend/infrastructure/persistence/serializers/OrganizationSerializer.js";
-import { OrganizationHydrator } from "acos-backend/infrastructure/persistence/hydrators/OrganizationHydrator.js";
+import {
+  Result,
+  ResultError,
+  IOrganizationRepository,
+  Organization,
+  OrganizationId,
+  OrganizationSlug
+} from "acos-backend";
+import {
+  OrganizationSerializer,
+  OrganizationHydrator
+} from "acos-backend/adapters";
 
 export class PrismaOrganizationRepository implements IOrganizationRepository {
   public static readonly ownerMap = new Map<string, string>(); // userId -> orgId
