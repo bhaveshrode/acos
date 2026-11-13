@@ -22,7 +22,6 @@ import {
   PaymentId,
   PaymentReference,
   GatewayReference,
-  TransactionHash,
   IAccountsReceivableRepository,
   AccountsReceivable,
   ReceivableAccountId
@@ -267,29 +266,11 @@ export class MockPaymentRepository implements IPaymentRepository {
     return Result.fail(ResultError.notFound("Payment not found."));
   }
 
-  public async findByTransactionHash(hash: TransactionHash): Promise<Result<Payment>> {
-    for (const item of this.items.values()) {
-      if (item.transactionHash && item.transactionHash.equals(hash)) {
-        return Result.ok(item);
-      }
-    }
-    return Result.fail(ResultError.notFound("Payment not found."));
-  }
-
   public async findByInvoice(orgId: OrganizationId, invoiceId: InvoiceId): Promise<Result<Payment[]>> {
     const list = Array.from(this.items.values()).filter(
       (item) => item.organizationId.equals(orgId) && item.allocations.some(a => a.invoiceId.equals(invoiceId))
     );
     return Result.ok(list);
-  }
-
-  public async existsHash(hash: TransactionHash): Promise<Result<boolean>> {
-    for (const item of this.items.values()) {
-      if (item.transactionHash && item.transactionHash.equals(hash)) {
-        return Result.ok(true);
-      }
-    }
-    return Result.ok(false);
   }
 
   public async save(payment: Payment): Promise<Result<void>> {
