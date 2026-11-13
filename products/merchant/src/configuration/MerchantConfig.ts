@@ -12,9 +12,9 @@ export interface IMerchantConfig {
   brokerUrl?: string | null;
   replicaId?: string;
   paymentProvider?: PaymentProviderName;
-  razorpayKeyId?: string;
-  razorpayKeySecret?: string;
-  razorpayWebhookSecret?: string;
+  razorpayKeyId?: string | null;
+  razorpayKeySecret?: string | null;
+  razorpayWebhookSecret?: string | null;
 }
 
 export class MerchantConfig implements IMerchantConfig {
