@@ -5,7 +5,8 @@ import {
   IOrganizationRepository,
   Organization,
   OrganizationId,
-  OrganizationSlug
+  OrganizationSlug,
+  UserId
 } from "acos-backend";
 import { OrganizationSerializer } from "../../adapters/persistence/serializers/OrganizationSerializer.js";
 import { OrganizationHydrator } from "../../adapters/persistence/hydrators/OrganizationHydrator.js";
