@@ -1200,7 +1200,7 @@ export class AcosIntegrationBoundary {
     } catch (compensationError) {
       this.logger.error(
         "createPaymentRequest: Could not record the gateway failure; the payment remains pending.",
-        compensationError
+        compensationError instanceof Error ? compensationError : new Error(String(compensationError))
       );
     }
   }
