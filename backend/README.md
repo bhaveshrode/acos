@@ -75,3 +75,10 @@ npm run prisma:migrate:dev -- --name add_customer_index
 
 `schema.prisma` must never change without a matching migration. The gate diffs the migrated database against the datamodel and fails the build when they disagree, so a schema edit that is missing its migration surfaces at review time rather than in production.
 
+A database created before the migration history existed already has the tables but no `_prisma_migrations` rows, so `migrate deploy` refuses it with P3005. Mark the baseline as applied once against that database, then deploy as usual:
+
+```bash
+npx prisma migrate resolve --applied 20261113120000_init
+npm run prisma:migrate
+```
+
