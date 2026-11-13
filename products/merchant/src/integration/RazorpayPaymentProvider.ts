@@ -14,6 +14,8 @@ export interface RazorpayPaymentLink {
   id: string;
   short_url: string;
   status: string;
+  amount?: number;
+  currency?: string;
 }
 
 export interface RazorpayPaymentEntity {
