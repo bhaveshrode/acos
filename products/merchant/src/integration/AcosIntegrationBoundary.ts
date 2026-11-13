@@ -10,6 +10,8 @@ import {
   UserId,
   Email,
   SessionId,
+  verifyUserEmail,
+  terminateUserSession,
   AuthenticationService,
   UniqueEntityID,
   IOrganizationRepository,
@@ -43,6 +45,10 @@ import {
   ReceivableAccountId,
   SettlementId,
   CreditAllocationPolicy,
+  openReceivableAccount,
+  registerInvoiceObligation,
+  applyReceivablePayment,
+  getReceivableCreditBalance,
   IEventBus,
   IDomainEvent,
   IEventHandler
@@ -327,7 +333,7 @@ export class AcosIntegrationBoundary {
     if (userRes.isSuccess) {
       const user = userRes.value;
       const verificationToken = user.verificationToken?.token ?? "";
-      const verifyRes = user.verifyEmail(verificationToken);
+      const verifyRes = verifyUserEmail(user, verificationToken);
       if (verifyRes.isSuccess) {
         await this.userRepository.save(user);
         this.logger.info("signUp: User verification succeeded and status set to ACTIVE.");
@@ -410,7 +416,7 @@ export class AcosIntegrationBoundary {
       const userRes = await this.userRepository.findById(new UserId(userIdVal));
       if (userRes.isSuccess) {
         const user = userRes.value;
-        const terminateRes = user.terminateSession(new SessionId(sessionIdVal));
+        const terminateRes = terminateUserSession(user, new SessionId(sessionIdVal));
         if (terminateRes.isSuccess) {
           await this.userRepository.save(user);
           this.logger.info("logout: Session successfully terminated on ACOS User aggregate.");
@@ -933,23 +939,24 @@ export class AcosIntegrationBoundary {
         if (arRes.isSuccess) {
           ar = arRes.value;
         } else {
-          ar = AccountsReceivable.create(
-            ReceivableAccountId.generate(),
-            invoice.organizationId,
-            invoice.customerId
-          ).value;
+          const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
+          if (openRes.isFailure) {
+            throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+          }
+          ar = openRes.value;
         }
 
         // Ensure obligation is registered in AR
-        if (!ar.entries.some(e => e.invoiceId.equals(invoice.id))) {
-          ar.addInvoice(new UniqueEntityID(), invoice.id, invoice.grandTotal, invoice.dueDate.value);
+        const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
+        if (registerRes.isFailure) {
+          throw new Error(`Accounts Receivable booking rejected: ${registerRes.error.message}`);
         }
 
         // Apply allocation to AR entries
         const settlementId = new SettlementId(payment.id.value);
         const creditPolicy = new CreditAllocationPolicy();
-        const applyRes = ar.applyPayment(
-          new UniqueEntityID(),
+        const applyRes = applyReceivablePayment(
+          ar,
           settlementId,
           invoice.id,
           Money.create(allocation.allocatedAmount.amount, allocation.allocatedAmount.currency).value,
@@ -1134,7 +1141,7 @@ export class AcosIntegrationBoundary {
     if ("items" in this.accountsReceivableRepository) {
       for (const ar of (this.accountsReceivableRepository as any).items.values()) {
         if (ar.organizationId.value === orgId) {
-          totalCredit += ar.getCreditBalance(currency).amount;
+          totalCredit += getReceivableCreditBalance(ar, currency).amount;
         }
       }
     } else {

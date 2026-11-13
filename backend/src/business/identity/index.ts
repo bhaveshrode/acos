@@ -11,6 +11,8 @@ export * from "./events/UserLoggedOut.js";
 export * from "./events/UserReactivated.js";
 export * from "./events/UserRegistered.js";
 export * from "./events/UserSuspended.js";
+export * from "./operations/TerminateUserSession.js";
+export * from "./operations/VerifyUserEmail.js";
 export * from "./repositories/IUserRepository.js";
 export * from "./services/AuthenticationService.js";
 export * from "./services/EmailVerificationPolicy.js";
