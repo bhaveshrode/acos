@@ -1,3 +1,5 @@
+import type { PaymentMethodType } from "acos-backend";
+
 export interface PaymentResponse {
   gatewayReference: string;
   status: "PROCESSING" | "SUCCEEDED" | "FAILED";
@@ -26,6 +28,11 @@ export interface PaymentCompletion {
 
 export interface IPaymentProvider {
   getName(): string;
+  /**
+   * Method recorded on every payment this provider collects, so history and
+   * callbacks attribute the money to the gateway that actually took it.
+   */
+  getMethodType(): PaymentMethodType;
   initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse>;
   completePayment(input: PaymentCompletion): Promise<PaymentResponse>;
 }

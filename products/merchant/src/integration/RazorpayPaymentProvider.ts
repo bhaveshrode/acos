@@ -1,4 +1,4 @@
-import { Money } from "acos-backend";
+import { Money, PaymentMethodType } from "acos-backend";
 import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentProvider.js";
 
 export const RAZORPAY_CURRENCY = "INR";
@@ -93,6 +93,10 @@ export class RazorpayPaymentProvider implements IPaymentProvider {
 
   public getName(): string {
     return "RAZORPAY";
+  }
+
+  public getMethodType(): PaymentMethodType {
+    return PaymentMethodType.RAZORPAY;
   }
 
   public async initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse> {

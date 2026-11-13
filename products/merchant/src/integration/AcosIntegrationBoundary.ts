@@ -1101,7 +1101,7 @@ export class AcosIntegrationBoundary {
       reference,
       amount: paymentAmount,
       currency,
-      method: "STRIPE",
+      method: this.paymentProvider.getMethodType(),
       invoiceId: invoice.id.value,
       allocatedAmount: paymentAmount
     });

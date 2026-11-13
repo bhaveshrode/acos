@@ -1,3 +1,4 @@
+import { PaymentMethodType } from "acos-backend";
 import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentProvider.js";
 
 /**
@@ -10,6 +11,11 @@ import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentP
 export class SandboxPaymentProvider implements IPaymentProvider {
   public getName(): string {
     return "SANDBOX_PROVIDER";
+  }
+
+  /** The simulator speaks the Stripe callback format, which is how its payments were always recorded. */
+  public getMethodType(): PaymentMethodType {
+    return PaymentMethodType.STRIPE;
   }
 
   public async initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse> {

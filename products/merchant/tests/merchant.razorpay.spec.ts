@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { describe, it, expect, beforeEach } from "vitest";
-import { Logger } from "acos-backend";
+import { Logger, PaymentMethodType } from "acos-backend";
 import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
@@ -91,6 +91,7 @@ describe("ACOS Merchant — Razorpay Payment Provider", () => {
   it("creates a payment link with the amount converted to minor units", async () => {
     const response = await provider.initiatePayment("payment-1", 19.99, "INR");
 
+    expect(provider.getMethodType()).toBe("RAZORPAY");
     expect(client.linkRequests).toHaveLength(1);
     expect(client.linkRequests[0]).toEqual({
       amountMinor: 1999,
@@ -302,6 +303,10 @@ class FailingInitiationProvider implements IPaymentProvider {
     return "razorpay";
   }
 
+  public getMethodType(): PaymentMethodType {
+    return PaymentMethodType.RAZORPAY;
+  }
+
   public async initiatePayment(): Promise<PaymentResponse> {
     throw new Error("Razorpay payment link request failed (401): Authentication failed");
   }
@@ -361,6 +366,7 @@ describe("ACOS Merchant — Gateway Initiation Failure", () => {
       const payments = await boundary.getPayments(user.id, org.id);
       expect(payments).toHaveLength(1);
       expect(payments[0].status).toBe("FAILED");
+      expect(payments[0].method).toBe("RAZORPAY");
 
       const stillSent = await boundary.getInvoiceById(user.id, invoice.id);
       expect(stillSent.status).toBe("SENT");

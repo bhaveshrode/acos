@@ -8,5 +8,6 @@ export enum PaymentMethodType {
   ACH = "ACH",
   CARD = "CARD",
   BANK_TRANSFER = "BANK_TRANSFER",
-  STRIPE = "STRIPE"
+  STRIPE = "STRIPE",
+  RAZORPAY = "RAZORPAY"
 }

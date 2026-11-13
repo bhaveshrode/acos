@@ -105,6 +105,7 @@ model Payment {
   amount           Decimal @db.Decimal(18, 4)
   currency         String
   status           String
+  method           String   @default("SANDBOX")
   gatewayReference String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
