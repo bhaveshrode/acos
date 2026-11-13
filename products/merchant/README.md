@@ -18,7 +18,7 @@ Prisma Database Client ────► PostgreSQL (durable persistence)
 
 -   **Authoritative Boundary**: The merchant application never updates business or financial states directly. All mutations pass through [AcosIntegrationBoundary.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/integration/AcosIntegrationBoundary.ts) command handlers.
 -   **Durable Outbox**: In production mode, mutations write events to the `OutboxEvent` table. The outbox processor polls this table sequentially, publishing events to the message bus to ensure transactional integrity.
--   **Broker Transport**: When `MERCHANT_BROKER_URL` is set, the message bus is backed by a Redis stream, so events reach every replica instead of only the process that wrote them. Each replica consumes under its own group; a failed handler stays pending and is reclaimed, and repeated failures are dead-lettered to `acos.events.dead`. Without the URL the boundary keeps the in-process bus and cannot deliver events to other replicas.
+-   **Broker Transport**: When `MERCHANT_BROKER_URL` is set, the message bus is backed by a Redis stream, so events reach every replica instead of only the process that wrote them. Each replica consumes under its own group; a failed handler stays pending and is reclaimed, and repeated failures are dead-lettered to `acos.events.dead`. Without the URL the boundary refuses to start unless the caller explicitly passes `allowInProcessBus`, which keeps the in-process bus and cannot deliver events to other replicas.
 
 ---
 
@@ -45,7 +45,7 @@ MERCHANT_BROKER_URL=redis://localhost:6379
 MERCHANT_REPLICA_ID=merchant-1
 ```
 
-`MERCHANT_BROKER_URL` enables cross-replica event delivery; without it the boundary runs on the in-process bus. `MERCHANT_REPLICA_ID` names the consumer group and must be unique per replica (it defaults to the hostname).
+`MERCHANT_BROKER_URL` is required for a normal start: without it the boundary aborts unless `connect()` is called with `allowInProcessBus`, which keeps outbox events inside the process that wrote them. `MERCHANT_REPLICA_ID` names the consumer group and must be unique per replica (it defaults to the hostname).
 
 ---
 

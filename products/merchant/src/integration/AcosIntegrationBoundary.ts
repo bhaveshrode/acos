@@ -125,6 +125,10 @@ export interface ConnectOptions {
    * Accepts the in-memory repositories, which drop every record when the process exits.
    */
   allowInMemory?: boolean;
+  /**
+   * Accepts the in-process event bus, whose events never leave this process.
+   */
+  allowInProcessBus?: boolean;
 }
 
 export interface BoundaryBusOptions {
@@ -190,9 +194,6 @@ export class AcosIntegrationBoundary {
       });
       this.eventBus = new OutboxEventBus(this.transport, this);
     } else {
-      this.logger.warn(
-        "Starting with the in-process event bus: outbox events will not reach other replicas. Set MERCHANT_BROKER_URL to enable the broker transport."
-      );
       this.eventBus = new OutboxEventBus(MessagingFactory.getEventBus(), this);
     }
   }
@@ -387,12 +388,20 @@ export class AcosIntegrationBoundary {
 
   /**
    * Initializes and boots ACOS runtime subsystems and wires up CQRS handlers.
-   * Throws when no database URL is given and in-memory repositories were not explicitly allowed.
+   * Throws when no database URL is given and in-memory repositories were not explicitly
+   * allowed, and when no broker URL was configured and the in-process bus was not explicitly
+   * allowed.
    */
   public async connect(env: string, dbUrl?: string, options: ConnectOptions = {}): Promise<boolean> {
     if (!dbUrl && !options.allowInMemory) {
       throw new Error(
         "Refusing to start without persistence: connect() requires a database URL. Pass allowInMemory to accept repositories that drop all state on exit."
+      );
+    }
+
+    if (!this.transport && !options.allowInProcessBus) {
+      throw new Error(
+        "Refusing to start without a broker: connect() requires a broker URL. Set MERCHANT_BROKER_URL, or pass allowInProcessBus to accept events that never leave this process."
       );
     }
 
@@ -435,6 +444,10 @@ export class AcosIntegrationBoundary {
 
       if (this.transport) {
         await this.transport.start();
+      } else {
+        this.logger.warn(
+          "Starting on the in-process event bus (allowInProcessBus): outbox events will not leave this process."
+        );
       }
 
       await this.runtime.initialize(env);

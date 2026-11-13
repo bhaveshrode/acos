@@ -42,7 +42,7 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
     backend = new MerchantBackend(config, boundary, writer);
     frontend = new MerchantFrontend(backend, writer);
 
-    await boundary.connect("test", undefined, { allowInMemory: true });
+    await boundary.connect("test", undefined, { allowInMemory: true, allowInProcessBus: true });
     await backend.start();
   });
 
@@ -81,7 +81,7 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
       expect(response.body.status).toBe("DISCONNECTED");
 
       // 3. Re-connect boundary for remaining tests
-      await boundary.connect("test", undefined, { allowInMemory: true });
+      await boundary.connect("test", undefined, { allowInMemory: true, allowInProcessBus: true });
     });
 
     it("should refuse to start on in-memory repositories unless they are explicitly allowed", async () => {
@@ -90,6 +90,17 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
       const guarded = new AcosIntegrationBoundary(new Logger("AcosBoundaryGuarded", writer), runtimeFactory);
 
       await expect(guarded.connect("test")).rejects.toThrow(/without persistence/);
+      expect((await guarded.checkConnectivity()).connected).toBe(false);
+    });
+
+    it("should refuse to start without a broker unless the in-process bus is explicitly allowed", async () => {
+      const runtimeFactory = new RuntimeFactory();
+      runtimeFactory.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+      const guarded = new AcosIntegrationBoundary(new Logger("AcosBoundaryNoBroker", writer), runtimeFactory);
+
+      await expect(
+        guarded.connect("test", undefined, { allowInMemory: true })
+      ).rejects.toThrow(/without a broker/);
       expect((await guarded.checkConnectivity()).connected).toBe(false);
     });
   });
