@@ -1,13 +1,17 @@
 import { PrismaClient } from "@prisma/client";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { ICustomerRepository } from "acos-backend/business/customer/repositories/ICustomerRepository.js";
-import { Customer } from "acos-backend/business/customer/aggregates/Customer.js";
-import { CustomerId } from "acos-backend/business/customer/value-objects/CustomerId.js";
-import { CustomerNumber } from "acos-backend/business/customer/value-objects/CustomerNumber.js";
-import { OrganizationId as OrgId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { CustomerExtractor } from "acos-backend/infrastructure/persistence/extractors/CustomerExtractor.js";
-import { CustomerHydrator } from "acos-backend/infrastructure/persistence/hydrators/CustomerHydrator.js";
+import {
+  Result,
+  ResultError,
+  ICustomerRepository,
+  Customer,
+  CustomerId,
+  CustomerNumber,
+  OrganizationId as OrgId
+} from "acos-backend";
+import {
+  CustomerExtractor,
+  CustomerHydrator
+} from "acos-backend/adapters";
 
 export class PrismaCustomerRepository implements ICustomerRepository {
   constructor(private prisma: PrismaClient) {}

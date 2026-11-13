@@ -1,11 +1,13 @@
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IAccountsReceivableRepository } from "acos-backend/business/accounts_receivable/repositories/IAccountsReceivableRepository.js";
-import { AccountsReceivable } from "acos-backend/business/accounts_receivable/aggregates/AccountsReceivable.js";
-import { ReceivableAccountId } from "acos-backend/business/accounts_receivable/value-objects/ReceivableAccountId.js";
-import { OrganizationId as OrgId } from "acos-backend/business/organization/value-objects/OrganizationId.js";
-import { CustomerId } from "acos-backend/business/customer/value-objects/CustomerId.js";
-import { InvoiceId as InvId } from "acos-backend/business/invoice/value-objects/InvoiceId.js";
+import {
+  Result,
+  ResultError,
+  IAccountsReceivableRepository,
+  AccountsReceivable,
+  ReceivableAccountId,
+  OrganizationId as OrgId,
+  CustomerId,
+  InvoiceId as InvId
+} from "acos-backend";
 
 export class PrismaAccountsReceivableRepository implements IAccountsReceivableRepository {
   private readonly items = new Map<string, AccountsReceivable>();

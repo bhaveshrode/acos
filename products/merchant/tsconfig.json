@@ -10,7 +10,9 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "paths": {
-      "acos-backend/*": ["../../backend/src/*"],
+      "acos-backend": ["../../backend/src/kernel/index.ts"],
+      "acos-backend/application": ["../../backend/src/kernel/application.ts"],
+      "acos-backend/adapters": ["../../backend/src/kernel/adapters.ts"],
       "acos-runtime": ["../../runtime/index.ts"],
       "acos-runtime/*": ["../../runtime/*"],
       "acos-platform": ["../../platform/dist/index.js"],

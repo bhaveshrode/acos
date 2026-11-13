@@ -1,6 +1,8 @@
-import { IEventBus } from "acos-backend/foundation/events/EventBus.js";
-import { IDomainEvent } from "acos-backend/foundation/events/DomainEvent.js";
-import { IEventHandler } from "acos-backend/foundation/events/EventHandler.js";
+import {
+  IEventBus,
+  IDomainEvent,
+  IEventHandler
+} from "acos-backend";
 import { AcosIntegrationBoundary } from "./AcosIntegrationBoundary.js";
 
 /**

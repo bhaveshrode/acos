@@ -1,7 +1,7 @@
-import { IOutboxRepository } from "acos-backend/foundation/events/IOutboxRepository.js";
-import { IEventBus } from "acos-backend/foundation/events/EventBus.js";
-import { EventSerializer } from "acos-backend/foundation/events/EventSerializer.js";
-import { Logger } from "acos-backend/foundation/logging/Logger.js";
+import { IOutboxRepository } from "acos-backend";
+import { IEventBus } from "acos-backend";
+import { EventSerializer } from "acos-backend";
+import { Logger } from "acos-backend";
 
 /**
  * Reusable runtime background daemon that polls the transactional outbox table,

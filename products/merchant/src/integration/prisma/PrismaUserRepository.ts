@@ -1,16 +1,18 @@
 import { PrismaClient } from "@prisma/client";
-import { Result } from "acos-backend/foundation/result/Result.js";
-import { ResultError } from "acos-backend/foundation/result/ResultError.js";
-import { IUserRepository } from "acos-backend/business/identity/repositories/IUserRepository.js";
-import { User } from "acos-backend/business/identity/aggregates/User.js";
-import { UserId } from "acos-backend/business/identity/value-objects/UserId.js";
-import { Email } from "acos-backend/business/identity/value-objects/Email.js";
-import { UserSerializer } from "acos-backend/infrastructure/persistence/serializers/UserSerializer.js";
-import { PasswordHash } from "acos-backend/business/identity/value-objects/PasswordHash.js";
-import { SessionId } from "acos-backend/business/identity/value-objects/SessionId.js";
-import { RefreshToken } from "acos-backend/business/identity/value-objects/RefreshToken.js";
-import { UserStatus } from "acos-backend/business/identity/enums/UserStatus.js";
-import { LoginAttempt } from "acos-backend/business/identity/value-objects/LoginAttempt.js";
+import {
+  Result,
+  ResultError,
+  IUserRepository,
+  User,
+  UserId,
+  Email,
+  PasswordHash,
+  SessionId,
+  RefreshToken,
+  UserStatus,
+  LoginAttempt
+} from "acos-backend";
+import { UserSerializer } from "acos-backend/adapters";
 
 export class PrismaUserRepository implements IUserRepository {
   constructor(private prisma: PrismaClient) {}
