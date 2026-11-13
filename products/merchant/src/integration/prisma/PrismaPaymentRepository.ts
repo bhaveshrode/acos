@@ -7,7 +7,6 @@ import {
   PaymentId,
   PaymentReference,
   GatewayReference,
-  TransactionHash,
   OrganizationId as OrgId,
   InvoiceId as InvId
 } from "acos-backend";
@@ -145,14 +144,6 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
     }
-  }
-
-  public async findByTransactionHash(hash: TransactionHash): Promise<Result<Payment>> {
-    return Result.fail(ResultError.notFound("Blockchain transactions not supported by Prisma adapter."));
-  }
-
-  public async existsHash(hash: TransactionHash): Promise<Result<boolean>> {
-    return Result.ok(false);
   }
 
   public async findByInvoice(orgId: OrgId, invoiceId: InvId): Promise<Result<Payment[]>> {
