@@ -55,3 +55,23 @@ npm test
 # Run tests in watch mode
 npm run test:watch
 ```
+
+---
+
+## 🗄️ Database Migrations
+
+The schema is deployed from the committed migrations in `prisma/migrations`, never by pushing the datamodel.
+
+```bash
+# Regenerate the Prisma client after a schema change
+npm run prisma:generate
+
+# Apply the committed migrations (the gate runs this before the merchant suites)
+npm run prisma:migrate
+
+# Author a new migration against a local PostgreSQL instance
+npm run prisma:migrate:dev -- --name add_customer_index
+```
+
+`schema.prisma` must never change without a matching migration. The gate diffs the migrated database against the datamodel and fails the build when they disagree, so a schema edit that is missing its migration surfaces at review time rather than in production.
+
