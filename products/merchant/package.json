@@ -12,9 +12,6 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.6",
     "acos-backend": "*",
-    "acos-compliance": "*",
-    "acos-infrastructure": "*",
-    "acos-platform": "*",
     "acos-runtime": "*",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1"
