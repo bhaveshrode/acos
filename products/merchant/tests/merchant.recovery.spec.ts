@@ -1,16 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Logger, LogWriter } from "../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../backend/src/foundation/logging/LogEntry.js";
-import { Mediator } from "../../../backend/src/application/foundation/pipeline/Mediator.js";
+import { Logger, LogEntry } from "acos-backend";
+import type { LogWriter } from "acos-backend";
+import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
 import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
 import { PrismaClient } from "@prisma/client";
-import { InMemoryEventBus } from "../../../backend/src/foundation/events/EventBus.js";
-import { EventMetadata } from "../../../backend/src/foundation/events/EventMetadata.js";
-import type { IDomainEvent } from "../../../backend/src/foundation/events/DomainEvent.js";
+import { InMemoryEventBus, EventMetadata } from "acos-backend";
+import type { IDomainEvent } from "acos-backend";
 import { OutboxEventBus } from "../src/integration/OutboxEventBus.js";
 
 describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () => {

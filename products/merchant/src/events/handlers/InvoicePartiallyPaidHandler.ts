@@ -1,5 +1,5 @@
-import { IEventHandler } from "../../../../../backend/src/foundation/events/EventHandler.js";
-import { InvoicePartiallyPaid } from "../../../../../backend/src/business/invoice/events/InvoicePartiallyPaid.js";
+import type { IEventHandler } from "acos-backend";
+import { InvoicePartiallyPaid } from "acos-backend";
 
 /**
  * Event Handler reacting to InvoicePartiallyPaid domain events.

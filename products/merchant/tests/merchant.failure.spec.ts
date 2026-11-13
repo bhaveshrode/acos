@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { Logger, LogWriter } from "../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../backend/src/foundation/logging/LogEntry.js";
-import { Mediator } from "../../../backend/src/application/foundation/pipeline/Mediator.js";
+import { Logger, LogEntry } from "acos-backend";
+import type { LogWriter } from "acos-backend";
+import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
 import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
@@ -166,7 +166,7 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -199,13 +199,13 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const paymentAgg = queryRes.value;
 
       // Force currency mismatch in allocations directly in the mock repo
       const alloc = paymentAgg.allocations[0];
-      const eurMoney = await import("../../../backend/src/business/invoice/value-objects/Money.js").then(m => m.Money.create(alloc.allocatedAmount.amount, "EUR").value);
+      const eurMoney = await import("acos-backend").then(m => m.Money.create(alloc.allocatedAmount.amount, "EUR").value);
       (alloc as any).props.allocatedAmount = eurMoney;
       await boundary.paymentRepository.save(paymentAgg);
 
@@ -230,7 +230,7 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
   describe("Event Bus & Handler Resilience Failures", () => {
     it("should handle unknown event types dispatched to event bus gracefully without crashing", async () => {
       // Simulate dispatching a mock event that is not subscribed to by any merchant handler
-      const baseEventClass = await import("../../../backend/src/foundation/events/DomainEvent.js").then(m => m.BaseDomainEvent);
+      const baseEventClass = await import("acos-backend").then(m => m.BaseDomainEvent);
       class UnknownDomainEvent extends baseEventClass {
         constructor() {
           super("aggregate-id", "UnknownAggregate");

@@ -1,5 +1,5 @@
-import { IEventHandler } from "../../../../../backend/src/foundation/events/EventHandler.js";
-import { InvoiceOverpaid } from "../../../../../backend/src/business/invoice/events/InvoiceOverpaid.js";
+import type { IEventHandler } from "acos-backend";
+import { InvoiceOverpaid } from "acos-backend";
 
 /**
  * Event Handler reacting to InvoiceOverpaid domain events.

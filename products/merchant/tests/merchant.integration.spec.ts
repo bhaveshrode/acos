@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
-import { Logger, LogWriter } from "../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../backend/src/foundation/logging/LogEntry.js";
-import { Mediator } from "../../../backend/src/application/foundation/pipeline/Mediator.js";
+import { Logger, LogEntry } from "acos-backend";
+import type { LogWriter } from "acos-backend";
+import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
 import { AcosIntegrationBoundary, SandboxPaymentProvider } from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend, MerchantBackendState } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
-import { Email } from "../../../backend/src/business/identity/value-objects/Email.js";
+import { Email } from "acos-backend";
 
 describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
   const logs: LogEntry[] = [];
@@ -102,7 +102,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(user.status).toBe("ACTIVE");
 
       const searchRes = await boundary.userRepository.findByEmail(
-        await import("../../../backend/src/business/identity/value-objects/Email.js").then(m => m.Email.create(email).value)
+        await import("acos-backend").then(m => m.Email.create(email).value)
       );
       expect(searchRes.isSuccess).toBe(true);
       expect(searchRes.value.name).toBe(name);
@@ -446,7 +446,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(issued.status).toBe("ISSUED");
 
       const queryRes = await boundary.invoiceRepository.findById(
-        await import("../../../backend/src/business/invoice/value-objects/InvoiceId.js").then(m => m.InvoiceId.from(created.id))
+        await import("acos-backend").then(m => m.InvoiceId.from(created.id))
       );
       expect(queryRes.isSuccess).toBe(true);
       expect(queryRes.value.status).toBe("ISSUED");
@@ -546,7 +546,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify payment exists in boundary repository
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       expect(queryRes.isSuccess).toBe(true);
       expect(queryRes.value.status).toBe("PROCESSING");
@@ -570,7 +570,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify gatewayReference is populated
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -581,7 +581,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify aggregate status in repository
       const reloadedRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       expect(reloadedRes.value.status).toBe("CONFIRMED");
       expect(reloadedRes.value.transactionHash).toBeDefined();
@@ -595,7 +595,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -605,7 +605,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify aggregate status in repository
       const reloadedRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       expect(reloadedRes.value.status).toBe("FAILED");
     });
@@ -678,7 +678,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -694,7 +694,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id, 200);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -706,8 +706,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify Outstanding balance in Accounts Receivable
       const arRes = await boundary.accountsReceivableRepository.findByCustomer(
-        await import("../../../backend/src/business/organization/value-objects/OrganizationId.js").then(m => m.OrganizationId.from(invoice.organizationId)),
-        await import("../../../backend/src/business/customer/value-objects/CustomerId.js").then(m => m.CustomerId.from(invoice.customerId))
+        await import("acos-backend").then(m => m.OrganizationId.from(invoice.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoice.customerId))
       );
       expect(arRes.isSuccess).toBe(true);
       expect(arRes.value.getOutstandingBalance("USD").amount).toBe(300); // 500 - 200 = 300
@@ -717,7 +717,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // 1. First payment of $200
       const payment1 = await frontend.collectPayment(bobInvoice.id, 200);
       const queryRes1 = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment1.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment1.id))
       );
       await frontend.simulateWebhook(queryRes1.value.gatewayReference!.value, true);
 
@@ -727,7 +727,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // 2. Second payment of $300 (remaining balance)
       const payment2 = await frontend.collectPayment(bobInvoice.id, 300);
       const queryRes2 = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment2.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment2.id))
       );
       await frontend.simulateWebhook(queryRes2.value.gatewayReference!.value, true);
 
@@ -737,8 +737,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify outstanding balance is 0
       const arRes = await boundary.accountsReceivableRepository.findByCustomer(
-        await import("../../../backend/src/business/organization/value-objects/OrganizationId.js").then(m => m.OrganizationId.from(invoiceFinal.organizationId)),
-        await import("../../../backend/src/business/customer/value-objects/CustomerId.js").then(m => m.CustomerId.from(invoiceFinal.customerId))
+        await import("acos-backend").then(m => m.OrganizationId.from(invoiceFinal.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoiceFinal.customerId))
       );
       expect(arRes.value.getOutstandingBalance("USD").amount).toBe(0);
     });
@@ -748,7 +748,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id, 600);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -760,8 +760,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify credit balance on AR account
       const arRes = await boundary.accountsReceivableRepository.findByCustomer(
-        await import("../../../backend/src/business/organization/value-objects/OrganizationId.js").then(m => m.OrganizationId.from(invoice.organizationId)),
-        await import("../../../backend/src/business/customer/value-objects/CustomerId.js").then(m => m.CustomerId.from(invoice.customerId))
+        await import("acos-backend").then(m => m.OrganizationId.from(invoice.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoice.customerId))
       );
       expect(arRes.value.getCreditBalance("USD").amount).toBe(100); // 600 - 500 = 100 excess credit
     });
@@ -770,13 +770,13 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const paymentAgg = queryRes.value;
       
       // Mutate the allocation currency to EUR
       const alloc = paymentAgg.allocations[0];
-      const eurMoney = await import("../../../backend/src/business/invoice/value-objects/Money.js").then(m => m.Money.create(alloc.allocatedAmount.amount, "EUR").value);
+      const eurMoney = await import("acos-backend").then(m => m.Money.create(alloc.allocatedAmount.amount, "EUR").value);
       (alloc as any).props.allocatedAmount = eurMoney;
       await boundary.paymentRepository.save(paymentAgg);
 
@@ -789,7 +789,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     it("should protect reconciliation idempotency and ignore duplicate webhook callbacks", async () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -805,8 +805,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Verify AR outstanding remains 0 (not negative or credit)
       const arRes = await boundary.accountsReceivableRepository.findByCustomer(
-        await import("../../../backend/src/business/organization/value-objects/OrganizationId.js").then(m => m.OrganizationId.from(invoice1.organizationId)),
-        await import("../../../backend/src/business/customer/value-objects/CustomerId.js").then(m => m.CustomerId.from(invoice1.customerId))
+        await import("acos-backend").then(m => m.OrganizationId.from(invoice1.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoice1.customerId))
       );
       expect(arRes.value.getOutstandingBalance("USD").amount).toBe(0);
       expect(arRes.value.getCreditBalance("USD").amount).toBe(0);
@@ -816,7 +816,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // 1. Bob has Invoice A and Payment A
       const bobPayment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(bobPayment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(bobPayment.id))
       );
       const bobGatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -838,7 +838,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // Charlie attempts to tamper with Bob's payment aggregate allocations by changing the invoiceId to Charlie's Invoice ID
       const bobPayAgg = queryRes.value;
       const bobAlloc = bobPayAgg.allocations[0];
-      (bobAlloc as any).props.invoiceId = await import("../../../backend/src/business/invoice/value-objects/InvoiceId.js").then(m => m.InvoiceId.from(charlieInvoice.id));
+      (bobAlloc as any).props.invoiceId = await import("acos-backend").then(m => m.InvoiceId.from(charlieInvoice.id));
       await boundary.paymentRepository.save(bobPayAgg);
 
       // Provider sends webhook for Bob's payment. When it processes, it loads Bob's payment aggregate.
@@ -898,7 +898,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // 2. Collect payment and trigger webhook
       const payment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
@@ -921,8 +921,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(backend.isInvoiceCached(bobInvoice.id)).toBe(true);
 
       // Dispatch manual InvoicePaid event multiple times
-      const eventClass = await import("../../../backend/src/business/invoice/events/InvoicePaid.js").then(m => m.InvoicePaid);
-      const moneyClass = await import("../../../backend/src/business/invoice/value-objects/Money.js").then(m => m.Money);
+      const eventClass = await import("acos-backend").then(m => m.InvoicePaid);
+      const moneyClass = await import("acos-backend").then(m => m.Money);
       
       const event = new eventClass(bobInvoice.id, moneyClass.create(500, "USD").value);
 
@@ -967,8 +967,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // 3. Dispatch an InvoicePaid event for Bob's Invoice.
       // This should invalidate Bob's cache, but Charlie's cache must remain intact (uncorrupted isolation).
-      const eventClass = await import("../../../backend/src/business/invoice/events/InvoicePaid.js").then(m => m.InvoicePaid);
-      const moneyClass = await import("../../../backend/src/business/invoice/value-objects/Money.js").then(m => m.Money);
+      const eventClass = await import("acos-backend").then(m => m.InvoicePaid);
+      const moneyClass = await import("acos-backend").then(m => m.Money);
       const event = new eventClass(bobInvoice.id, moneyClass.create(500, "USD").value);
 
       await boundary.eventBus.publish(event);
@@ -1053,7 +1053,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       // 2. Collect payment and trigger webhook reconciliation
       const payment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(
-        await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
       );
       const gatewayRef = queryRes.value.gatewayReference!.value;
 
