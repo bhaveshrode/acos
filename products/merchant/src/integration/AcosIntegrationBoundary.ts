@@ -914,24 +914,33 @@ export class AcosIntegrationBoundary {
 
     const providerResponse = await this.paymentProvider.initiatePayment(paymentId, paymentAmount, currency);
 
-    const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
-    if (paymentRes.isFailure) {
-      throw new Error(`Failed to reload newly created payment aggregate with ID ${paymentId}`);
-    }
+    const payment = await this.withinTransaction(async () => {
+      const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      if (paymentRes.isFailure) {
+        throw new Error(`Failed to reload newly created payment aggregate with ID ${paymentId}`);
+      }
 
-    const payment = paymentRes.value;
-    const attemptId1 = new UniqueEntityID();
-    const attemptId2 = new UniqueEntityID();
+      const aggregate = paymentRes.value;
+      const attemptId1 = new UniqueEntityID();
+      const attemptId2 = new UniqueEntityID();
 
-    submitPayment(payment, attemptId1);
-    
-    const gatewayRef = GatewayReference.create(providerResponse.gatewayReference).value;
-    startPaymentProcessing(payment, attemptId2, gatewayRef);
+      submitPayment(aggregate, attemptId1);
 
-    const saveRes = await this.paymentRepository.save(payment);
-    if (saveRes.isFailure) {
-      throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
-    }
+      const gatewayRef = GatewayReference.create(providerResponse.gatewayReference).value;
+      startPaymentProcessing(aggregate, attemptId2, gatewayRef);
+
+      const saveRes = await this.paymentRepository.save(aggregate);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
+      }
+
+      const events = aggregate.domainEvents;
+      aggregate.clearDomainEvents();
+      await this.eventBus.publishAll(events);
+
+      return aggregate;
+    });
+
     this.gatewayRefToPaymentId.set(providerResponse.gatewayReference, paymentId);
 
     this.logger.info("createPaymentRequest succeeded.", { paymentId, gatewayReference: providerResponse.gatewayReference });
@@ -1095,6 +1104,10 @@ export class AcosIntegrationBoundary {
       if (saveRes.isFailure) {
         throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
       }
+
+      const events = payment.domainEvents;
+      payment.clearDomainEvents();
+      await this.eventBus.publishAll(events);
 
       return payment;
     });
