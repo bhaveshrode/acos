@@ -117,7 +117,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         include: { lineItems: true }
       });
 
-      const list = rows.map((row) => {
+      const list = rows.map((row: any) => {
         const snapshot = {
           id: row.id,
           organizationId: row.organizationId,
@@ -162,7 +162,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
         include: { lineItems: true }
       });
 
-      const list = rows.map((row) => {
+      const list = rows.map((row: any) => {
         const snapshot = {
           id: row.id,
           organizationId: row.organizationId,
