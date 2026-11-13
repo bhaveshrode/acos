@@ -4,7 +4,7 @@ import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
-import { AcosIntegrationBoundary, SandboxPaymentProvider } from "../src/integration/AcosIntegrationBoundary.js";
+import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend, MerchantBackendState } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
 import { Email } from "acos-backend";
@@ -62,8 +62,6 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     if (typeof (boundary.invoiceRepository as any).clear === "function") (boundary.invoiceRepository as any).clear();
     if (typeof (boundary.paymentRepository as any).clear === "function") (boundary.paymentRepository as any).clear();
     if (typeof (boundary.accountsReceivableRepository as any).clear === "function") (boundary.accountsReceivableRepository as any).clear();
-    (boundary.paymentProvider as SandboxPaymentProvider).clear();
-    boundary.gatewayRefToPaymentId.clear();
     boundary.businessMetadata.clear();
     frontend.clearSessionToken();
   });

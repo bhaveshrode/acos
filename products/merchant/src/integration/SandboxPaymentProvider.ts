@@ -14,18 +14,19 @@ export interface IPaymentProvider {
 
 /**
  * Concrete implementation of IPaymentProvider simulating payment logic.
+ *
+ * The simulator keeps no state: callbacks resolve against the reference the
+ * caller persisted, so a webhook delivered after a restart behaves exactly
+ * like one delivered in the process that initiated the payment.
  */
 export class SandboxPaymentProvider implements IPaymentProvider {
-  private readonly initiated = new Map<string, { paymentId: string; amount: number; currency: string }>();
-
   public getName(): string {
     return "SANDBOX_PROVIDER";
   }
 
   public async initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse> {
     const gatewayReference = `sandbox-ref-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-    this.initiated.set(gatewayReference, { paymentId, amount, currency });
-    
+
     return {
       gatewayReference,
       status: "PROCESSING"
@@ -33,16 +34,6 @@ export class SandboxPaymentProvider implements IPaymentProvider {
   }
 
   public async completePayment(gatewayReference: string, success: boolean): Promise<PaymentResponse> {
-    const item = this.initiated.get(gatewayReference);
-    if (!item) {
-      return {
-        gatewayReference,
-        status: "FAILED",
-        errorCode: "REF_NOT_FOUND",
-        errorMessage: "Payment lookup failed: Gateway reference not found."
-      };
-    }
-
     if (success) {
       return {
         gatewayReference,
@@ -57,9 +48,5 @@ export class SandboxPaymentProvider implements IPaymentProvider {
         errorMessage: "Simulated sandbox transaction declined due to insufficient customer balances."
       };
     }
-  }
-
-  public clear(): void {
-    this.initiated.clear();
   }
 }

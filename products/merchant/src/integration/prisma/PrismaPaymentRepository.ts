@@ -6,6 +6,7 @@ import {
   Payment,
   PaymentId,
   PaymentReference,
+  GatewayReference,
   TransactionHash,
   OrganizationId as OrgId,
   InvoiceId as InvId
@@ -68,6 +69,48 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         where: { organizationId: orgId.value, reference: ref.value }
       });
       if (!row) return Result.fail(ResultError.notFound(`Payment reference not found.`));
+
+      const snapshot = {
+        id: row.id,
+        organizationId: row.organizationId,
+        customerId: "",
+        reference: row.reference,
+        amount: row.amount.toNumber(),
+        currency: row.currency,
+        status: row.status,
+        methodType: "SANDBOX",
+        methodDetails: "{}",
+        transactionHash: null,
+        gatewayReference: row.gatewayReference,
+        walletAddress: null,
+        metadata: {},
+        confirmations: 1,
+        exchangeRate: null,
+        allocations: [{
+          id: row.id,
+          invoiceId: row.invoiceId,
+          amount: row.amount.toNumber(),
+          currency: row.currency,
+          status: row.status
+        }],
+        attempts: [],
+        refundRequests: [],
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt
+      };
+
+      return Result.ok(PaymentHydrator.hydrate(snapshot as any));
+    } catch (err: any) {
+      return Result.fail(ResultError.unexpected(err.message));
+    }
+  }
+
+  public async findByGatewayReference(ref: GatewayReference): Promise<Result<Payment>> {
+    try {
+      const row = await this.db.payment.findFirst({
+        where: { gatewayReference: ref.value }
+      });
+      if (!row) return Result.fail(ResultError.notFound(`Payment with gateway reference ${ref.value} not found.`));
 
       const snapshot = {
         id: row.id,

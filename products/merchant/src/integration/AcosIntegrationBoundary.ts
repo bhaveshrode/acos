@@ -138,7 +138,6 @@ export class AcosIntegrationBoundary {
 
   // Sandbox provider context
   public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
-  public readonly gatewayRefToPaymentId = new Map<string, string>();
 
   // Local metadata registries
   public readonly businessMetadata = new Map<string, { businessType: string; country: string; contactInfo: string }>();
@@ -941,8 +940,6 @@ export class AcosIntegrationBoundary {
       return aggregate;
     });
 
-    this.gatewayRefToPaymentId.set(providerResponse.gatewayReference, paymentId);
-
     this.logger.info("createPaymentRequest succeeded.", { paymentId, gatewayReference: providerResponse.gatewayReference });
 
     const mapper = new PaymentMapper();
@@ -961,8 +958,8 @@ export class AcosIntegrationBoundary {
   ): Promise<any> {
     this.logger.info("processPaymentWebhook: Processing webhook event...", { gatewayReference, success });
 
-    const paymentId = this.gatewayRefToPaymentId.get(gatewayReference);
-    if (!paymentId) {
+    const gatewayRefRes = GatewayReference.create(gatewayReference);
+    if (gatewayRefRes.isFailure) {
       throw new Error(`No payment aggregate registered under gateway reference: ${gatewayReference}`);
     }
 
@@ -971,9 +968,11 @@ export class AcosIntegrationBoundary {
     const providerResponse = await this.paymentProvider.completePayment(gatewayReference, success);
 
     const payment = await this.withinTransaction(async () => {
-      const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      // Callbacks outlive the process that initiated the payment, so the
+      // aggregate is resolved from its persisted reference, not process memory.
+      const paymentRes = await this.paymentRepository.findByGatewayReference(gatewayRefRes.value);
       if (paymentRes.isFailure) {
-        throw new Error(`Payment aggregate associated with ID ${paymentId} not found.`);
+        throw new Error(`Payment aggregate associated with gateway reference ${gatewayReference} not found.`);
       }
 
       const payment = paymentRes.value;
