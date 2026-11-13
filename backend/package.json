@@ -11,8 +11,11 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:kernel": "vitest run src/foundation src/business",
     "test:watch": "vitest",
-    "build": "tsc"
+    "build": "tsc -p tsconfig.build.json",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",
