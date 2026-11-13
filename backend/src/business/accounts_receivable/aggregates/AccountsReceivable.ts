@@ -34,6 +34,7 @@ import { Money } from "../../invoice/value-objects/Money.js";
 import { ReceivableCreated } from "../events/ReceivableCreated.js";
 import { OutstandingBalanceUpdated } from "../events/OutstandingBalanceUpdated.js";
 import { PaymentApplied } from "../events/PaymentApplied.js";
+import { RefundApplied } from "../events/RefundApplied.js";
 import { CustomerCreditCreated } from "../events/CustomerCreditCreated.js";
 import { CustomerCreditApplied } from "../events/CustomerCreditApplied.js";
 import { InvoiceOverdue } from "../events/InvoiceOverdue.js";
@@ -344,6 +345,58 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
 
     this.props.updatedAt = new Date();
     this.addDomainEvent(new CustomerCreditApplied(this.id.value, invoiceId, amount));
+    this.addDomainEvent(new OutstandingBalanceUpdated(this.id.value, this.getOutstandingBalance(amount.currency)));
+    this.addDomainEvent(new AccountBalanceUpdated(this.id.value, this.getAccountBalance(amount.currency)));
+
+    return Result.ok();
+  }
+
+  /**
+   * Re-opens an invoice obligation after collected funds were returned to the
+   * payer. The amount cannot exceed what is currently collected on the entry.
+   */
+  public applyRefund(invoiceId: InvoiceId, amount: Money): Result<void> {
+    const editCheck = this.ensureMutable();
+    if (editCheck.isFailure) return Result.fail(editCheck.error);
+
+    if (this.props.status === ReceivableStatus.WRITTEN_OFF) {
+      return Result.fail(ResultError.conflict("Cannot apply refunds to a written-off receivable."));
+    }
+
+    const entry = this.props.entries.get(invoiceId.value);
+    if (!entry) {
+      return Result.fail(ResultError.notFound(`Invoice entry '${invoiceId.value}' not found.`));
+    }
+
+    if (amount.currency !== entry.originalAmount.currency) {
+      return Result.fail(ResultError.conflict("Currency mismatch in refund application."));
+    }
+    if (amount.amount <= 0) {
+      return Result.fail(ResultError.conflict("Refund amount must be positive."));
+    }
+
+    const collected = entry.originalAmount.amount - entry.remainingBalance.amount;
+    if (amount.amount > collected) {
+      return Result.fail(
+        ResultError.conflict(`Refund exceeds the amount collected on invoice '${invoiceId.value}'.`)
+      );
+    }
+
+    entry.reversePayment(amount);
+
+    if (this.props.status !== ReceivableStatus.IN_COLLECTIONS) {
+      let hasOverdue = false;
+      this.props.entries.forEach((e) => {
+        if (!e.isPaid && e.dueDate < new Date()) {
+          hasOverdue = true;
+        }
+      });
+      this.props.status = hasOverdue ? ReceivableStatus.OVERDUE : ReceivableStatus.PARTIALLY_PAID;
+    }
+
+    this.props.updatedAt = new Date();
+
+    this.addDomainEvent(new RefundApplied(this.id.value, invoiceId, amount));
     this.addDomainEvent(new OutstandingBalanceUpdated(this.id.value, this.getOutstandingBalance(amount.currency)));
     this.addDomainEvent(new AccountBalanceUpdated(this.id.value, this.getAccountBalance(amount.currency)));
 

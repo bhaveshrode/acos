@@ -64,6 +64,25 @@ export class ReceivableEntry extends Entity<UniqueEntityID> {
   }
 
   /**
+   * Re-opens a paid balance after a refund. Restores at most the amount that
+   * was collected on this entry and returns any excess it could not absorb.
+   */
+  public reversePayment(amount: Money): Money {
+    if (amount.currency !== this.props.remainingBalance.currency) {
+      throw new Error("Currency mismatch in payment reversal.");
+    }
+
+    const collected = this.props.originalAmount.amount - this.props.remainingBalance.amount;
+    if (amount.amount >= collected) {
+      this.props.remainingBalance = Money.create(this.props.originalAmount.amount, this.props.remainingBalance.currency).value;
+      return Money.create(amount.amount - collected, amount.currency).value;
+    } else {
+      this.props.remainingBalance = Money.create(this.props.remainingBalance.amount + amount.amount, this.props.remainingBalance.currency).value;
+      return Money.create(0, amount.currency).value;
+    }
+  }
+
+  /**
    * Checks if this entry is fully paid.
    */
   public get isPaid(): boolean {

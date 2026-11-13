@@ -387,6 +387,18 @@ export class Payment extends AggregateRoot<PaymentId> {
 
     if (completedTotal >= this.amount.amount) {
       this.props.status = PaymentStatus.REFUNDED;
+    } else {
+      // A completed partial refund leaves the rest of the payment collected,
+      // so the payment returns to CONFIRMED unless another refund is still open.
+      let openRefund = false;
+      this.props.refundRequests.forEach((req) => {
+        if (req.status === RefundStatus.REQUESTED || req.status === RefundStatus.APPROVED) {
+          openRefund = true;
+        }
+      });
+      if (!openRefund) {
+        this.props.status = PaymentStatus.CONFIRMED;
+      }
     }
 
     this.props.updatedAt = new Date();

@@ -16,6 +16,7 @@ The Accounts Receivable (AR) Bounded Context manages the outstanding financial o
 ## Responsibilities
 - Tracking outstanding invoice obligations per customer.
 - Recording payment applications linked to completed settlements.
+- Re-opening an invoice obligation when collected funds are refunded to the payer; a refund can never exceed what is currently collected on that invoice.
 - Recording and allocating customer credits.
 - Computing aging categories and managing collections actions.
 - Enforcing write-off approvals.
