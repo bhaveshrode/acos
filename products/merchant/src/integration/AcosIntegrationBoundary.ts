@@ -275,7 +275,7 @@ export class AcosIntegrationBoundary {
         this.customerRepository = new PrismaCustomerRepository(prismaClient) as any;
         this.invoiceRepository = new PrismaInvoiceRepository(prismaClient) as any;
         this.paymentRepository = new PrismaPaymentRepository(prismaClient) as any;
-        this.accountsReceivableRepository = new PrismaAccountsReceivableRepository() as any;
+        this.accountsReceivableRepository = new PrismaAccountsReceivableRepository(prismaClient) as any;
       }
 
       await this.runtime.initialize(env);
@@ -1048,7 +1048,10 @@ export class AcosIntegrationBoundary {
           if (applyRes.isFailure) {
             throw new Error(`Accounts Receivable booking rejected: ${applyRes.error.message}`);
           }
-          await this.accountsReceivableRepository.save(ar);
+          const arSaveRes = await this.accountsReceivableRepository.save(ar);
+          if (arSaveRes.isFailure) {
+            throw new Error(`Failed to persist receivable ledger: ${arSaveRes.error.message}`);
+          }
 
           // 5. Update Invoice Obligation Status (handling cumulative multi-payments)
           const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);

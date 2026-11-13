@@ -78,14 +78,14 @@ Sign Up ──► Login ──► Onboard Business ──► Create Customer ─
 ## 6. Persistence Architecture
 The persistence layer supports two execution contexts:
 1. **Mock Context (Development Fallback)**: In-memory repository registries mapping data to local collections for rapid testing.
-2. **Persistent Context (Production Mode)**: Relational tables mapped to PostgreSQL using Prisma Client. Repositories utilize transaction boundaries (`$transaction`) to enforce financial ledger consistency.
+2. **Persistent Context (Production Mode)**: Relational tables mapped to PostgreSQL using Prisma Client. Repositories utilize transaction boundaries (`$transaction`) to enforce financial ledger consistency. The accounts receivable ledger (`ReceivableAccount` with its entry, credit, application and collection-action rows) lives here too, so balances survive a restart.
 
 ---
 
 ## 7. Event & Outbox Architecture
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
 1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
-2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
+2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices and the receivable ledger, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
 3. The payment lifecycle is enqueued the same way: `PaymentSubmitted` and `PaymentProcessingStarted` when a request is collected, `PaymentAllocated` and `PaymentConfirmed` when the webhook confirms, and `PaymentFailed` when it declines — each inside the transaction that writes the payment row.
 
 ---
@@ -119,7 +119,6 @@ The release criteria baseline is strictly frozen as follows:
 
 ## 11. Known Development Fallbacks
 * **Mock Repositories**: Default to in-memory mocks when database URLs are omitted.
-* **In-Memory Accounts Receivable**: The AR ledger (`PrismaAccountsReceivableRepository`) keeps accounts in process memory even in persistent mode, so AR balances are not covered by the database transactions above and do not survive a restart.
 * **Sandbox Payment Provider**: Simulates provider integrations rather than querying live Stripe endpoints. It holds no in-process state, so a simulated callback can be delivered to any process that can reach the database.
 * **Local Event Bus**: Utilizes in-memory dispatching rather than external message queues (e.g. RabbitMQ/Kafka).
 

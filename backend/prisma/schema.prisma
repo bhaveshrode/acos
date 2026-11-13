@@ -116,3 +116,66 @@ model OutboxEvent {
   createdAt   DateTime  @default(now())
   processedAt DateTime?
 }
+
+model ReceivableAccount {
+  id               String   @id
+  organizationId   String
+  customerId       String
+  status           String
+  collectionStatus String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  entries             ReceivableEntry[]
+  credits             ReceivableCredit[]
+  paymentApplications ReceivablePaymentApplication[]
+  collectionActions   ReceivableCollectionAction[]
+
+  @@unique([organizationId, customerId])
+}
+
+model ReceivableEntry {
+  id              String   @id
+  accountId       String
+  invoiceId       String
+  originalAmount  Decimal  @db.Decimal(18, 4)
+  remainingAmount Decimal  @db.Decimal(18, 4)
+  currency        String
+  dueDate         DateTime
+  account         ReceivableAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, invoiceId])
+  @@index([invoiceId])
+}
+
+model ReceivableCredit {
+  id              String   @id
+  accountId       String
+  source          String
+  amount          Decimal  @db.Decimal(18, 4)
+  remainingAmount Decimal  @db.Decimal(18, 4)
+  currency        String
+  reason          String
+  createdAt       DateTime
+  account         ReceivableAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model ReceivablePaymentApplication {
+  id           String   @id
+  accountId    String
+  settlementId String
+  invoiceId    String
+  amount       Decimal  @db.Decimal(18, 4)
+  currency     String
+  appliedAt    DateTime
+  account      ReceivableAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model ReceivableCollectionAction {
+  id          String   @id
+  accountId   String
+  actionType  String
+  notes       String
+  performedBy String
+  timestamp   DateTime
+  account     ReceivableAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
