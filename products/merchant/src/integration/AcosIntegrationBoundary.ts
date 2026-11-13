@@ -12,6 +12,7 @@ import {
   SessionId,
   verifyUserEmail,
   terminateUserSession,
+  EventSerializer,
   AuthenticationService,
   UniqueEntityID,
   IOrganizationRepository,
@@ -49,9 +50,7 @@ import {
   registerInvoiceObligation,
   applyReceivablePayment,
   getReceivableCreditBalance,
-  IEventBus,
-  IDomainEvent,
-  IEventHandler
+  IEventBus
 } from "acos-backend";
 import { JwtTokenProvider } from "../adapters/security/JwtTokenProvider.js";
 import { MessagingFactory } from "../adapters/messaging/factories/MessagingFactory.js";
@@ -88,6 +87,7 @@ import {
 } from "acos-backend/application";
 
 import { OutboxEventBus } from "./OutboxEventBus.js";
+import { TransactionScope } from "../adapters/transactions/scopes/TransactionScope.js";
 import { AcosPasswordHasher } from "./AcosPasswordHasher.js";
 import {
   MockUserRepository,
@@ -133,6 +133,7 @@ export class AcosIntegrationBoundary {
   public readonly eventBus: IEventBus;
   public prismaClient: any = null;
   private isProcessingOutbox = false;
+  private outboxDrainPending = false;
 
   // Sandbox provider context
   public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
@@ -152,10 +153,57 @@ export class AcosIntegrationBoundary {
   }
 
   /**
+   * Database handle for the active unit of work: the ambient transaction client if one
+   * is open, otherwise the root Prisma client. Outbox enqueues must use this so that the
+   * event row commits atomically with the aggregate row.
+   */
+  public get dbClient(): any {
+    return TransactionScope.current ?? this.prismaClient;
+  }
+
+  /**
+   * Drains the outbox. When a transaction is open the drain is deferred until commit,
+   * so subscribers never observe events whose aggregate write could still roll back.
+   */
+  public async requestOutboxDrain(): Promise<void> {
+    if (TransactionScope.current) {
+      this.outboxDrainPending = true;
+      return;
+    }
+    await this.processOutboxAsynchronously();
+  }
+
+  /**
+   * Runs `work` inside a database transaction and assigns that transaction's client to
+   * the ambient TransactionScope, so repositories and the outbox enqueue join it.
+   */
+  private async withinTransaction<T>(work: () => Promise<T>): Promise<T> {
+    if (!this.prismaClient || TransactionScope.current) {
+      return work();
+    }
+
+    try {
+      const result = await this.prismaClient.$transaction(async (tx: any) =>
+        TransactionScope.run(tx, work)
+      );
+
+      if (this.outboxDrainPending) {
+        this.outboxDrainPending = false;
+        await this.processOutboxAsynchronously();
+      }
+
+      return result;
+    } catch (err) {
+      this.outboxDrainPending = false;
+      throw err;
+    }
+  }
+
+  /**
    * Background runner that processes unprocessed OutboxEvent records sequentially.
    */
   public async processOutboxAsynchronously(): Promise<void> {
-    if (this.isProcessingOutbox || !this.prismaClient) return;
+    if (this.isProcessingOutbox || TransactionScope.current || !this.prismaClient) return;
     this.isProcessingOutbox = true;
 
     try {
@@ -164,25 +212,28 @@ export class AcosIntegrationBoundary {
         orderBy: { createdAt: "asc" }
       });
 
+      const rawBus = (this.eventBus as OutboxEventBus).underlyingBus;
       for (const record of records) {
-        const eventData = JSON.parse(record.payload);
-        const domainEvent: IDomainEvent = {
-          ...eventData,
-          eventName: record.eventType,
-          occurredOn: new Date(eventData.occurredOn || Date.now()),
-          getAggregateId() {
-            return (this as any).metadata?.aggregateId || "";
-          }
-        };
-
-        const rawBus = (this.eventBus as OutboxEventBus).underlyingBus;
-        await rawBus.publish(domainEvent);
+        try {
+          const domainEvent = EventSerializer.deserialize(record.eventType, record.payload);
+          await rawBus.publish(domainEvent);
+        } catch (err: any) {
+          await this.prismaClient.outboxEvent.update({
+            where: { id: record.id },
+            data: {
+              retryCount: { increment: 1 },
+              lastError: String(err?.message ?? err)
+            }
+          });
+          continue;
+        }
 
         await this.prismaClient.outboxEvent.update({
           where: { id: record.id },
           data: {
             processed: true,
-            processedAt: new Date()
+            processedAt: new Date(),
+            lastError: null
           }
         });
       }
@@ -269,7 +320,7 @@ export class AcosIntegrationBoundary {
       const invoiceMapper = new InvoiceMapper();
       this.mediator.registerHandler(
         CreateInvoiceCommand as any,
-        new CreateInvoiceCommandHandler(this.invoiceRepository, invoiceMapper) as any
+        new CreateInvoiceCommandHandler(this.invoiceRepository, invoiceMapper, this.eventBus) as any
       );
       this.mediator.registerHandler(
         GetInvoiceByIdQuery as any,
@@ -280,7 +331,7 @@ export class AcosIntegrationBoundary {
       const paymentMapper = new PaymentMapper();
       this.mediator.registerHandler(
         SubmitPaymentCommand as any,
-        new SubmitPaymentCommandHandler(this.paymentRepository, paymentMapper) as any
+        new SubmitPaymentCommandHandler(this.paymentRepository, paymentMapper, this.eventBus) as any
       );
       this.mediator.registerHandler(
         GetPaymentByIdQuery as any,
@@ -682,7 +733,7 @@ export class AcosIntegrationBoundary {
     }
 
     const command = new CreateInvoiceCommand(dto);
-    const result = (await this.mediator.send(command as any)) as any;
+    const result = (await this.withinTransaction(() => this.mediator.send(command as any))) as any;
 
     if (!result.isSuccess) {
       const errMsg = result.errors.join(", ");
@@ -734,25 +785,35 @@ export class AcosIntegrationBoundary {
   public async issueInvoice(userId: string, invoiceId: string): Promise<any> {
     this.logger.info("issueInvoice: Transitioning invoice DRAFT -> ISSUED...", { userId, invoiceId });
 
-    const invoiceRes = await this.invoiceRepository.findById(new InvoiceId(invoiceId));
-    if (invoiceRes.isFailure) {
-      throw new Error(`Invoice with ID ${invoiceId} not found.`);
-    }
+    const invoice = await this.withinTransaction(async () => {
+      const invoiceRes = await this.invoiceRepository.findById(new InvoiceId(invoiceId));
+      if (invoiceRes.isFailure) {
+        throw new Error(`Invoice with ID ${invoiceId} not found.`);
+      }
 
-    const invoice = invoiceRes.value;
+      const aggregate = invoiceRes.value;
 
-    await this.verifyBusinessOwnership(userId, invoice.organizationId.value);
+      await this.verifyBusinessOwnership(userId, aggregate.organizationId.value);
 
-    const issueRes = issueInvoiceOperation(invoice);
-    if (issueRes.isFailure) {
-      this.logger.warn("issueInvoice: Aggregate rejected issuing", { error: issueRes.error.message });
-      throw new Error(issueRes.error.message);
-    }
+      const issueRes = issueInvoiceOperation(aggregate);
+      if (issueRes.isFailure) {
+        this.logger.warn("issueInvoice: Aggregate rejected issuing", { error: issueRes.error.message });
+        throw new Error(issueRes.error.message);
+      }
 
-    const saveRes = await this.invoiceRepository.save(invoice);
-    if (saveRes.isFailure) {
-      throw new Error(`Failed to save invoice aggregate: ${saveRes.error.message}`);
-    }
+      const saveRes = await this.invoiceRepository.save(aggregate);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save invoice aggregate: ${saveRes.error.message}`);
+      }
+
+      if (aggregate.domainEvents.length > 0) {
+        await this.eventBus.publishAll(aggregate.domainEvents);
+        aggregate.clearDomainEvents();
+      }
+
+      return aggregate;
+    });
+
     this.logger.info("issueInvoice: Successfully updated status to ISSUED.");
 
     return this.mapInvoice(invoice);
@@ -829,7 +890,7 @@ export class AcosIntegrationBoundary {
       allocatedAmount: paymentAmount
     });
 
-    const result = (await this.mediator.send(command as any)) as any;
+    const result = (await this.withinTransaction(() => this.mediator.send(command as any))) as any;
     if (!result.isSuccess) {
       const errMsg = result.errors.join(", ");
       this.logger.warn("createPaymentRequest: SubmitPaymentCommand rejected by ACOS", { error: errMsg });

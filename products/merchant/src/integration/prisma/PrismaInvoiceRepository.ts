@@ -11,13 +11,19 @@ import {
 } from "acos-backend";
 import { InvoiceExtractor } from "../../adapters/persistence/extractors/InvoiceExtractor.js";
 import { InvoiceHydrator } from "../../adapters/persistence/hydrators/InvoiceHydrator.js";
+import { TransactionScope } from "../../adapters/transactions/scopes/TransactionScope.js";
 
 export class PrismaInvoiceRepository implements IInvoiceRepository {
   constructor(private prisma: PrismaClient) {}
 
+  /** Joins the ambient unit of work when the boundary opened one. */
+  private get db(): any {
+    return TransactionScope.current ?? this.prisma;
+  }
+
   public async findById(id: InvoiceId): Promise<Result<Invoice>> {
     try {
-      const row = await this.prisma.invoice.findUnique({
+      const row = await this.db.invoice.findUnique({
         where: { id: id.value },
         include: { lineItems: true }
       });
@@ -62,7 +68,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
 
   public async findByInvoiceNumber(orgId: OrgId, number: InvoiceNumber): Promise<Result<Invoice>> {
     try {
-      const row = await this.prisma.invoice.findFirst({
+      const row = await this.db.invoice.findFirst({
         where: { organizationId: orgId.value, invoiceNumber: number.value },
         include: { lineItems: true }
       });
@@ -106,7 +112,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
 
   public async findByCustomer(orgId: OrgId, customerId: CustomerId): Promise<Result<Invoice[]>> {
     try {
-      const rows = await this.prisma.invoice.findMany({
+      const rows = await this.db.invoice.findMany({
         where: { organizationId: orgId.value, customerId: customerId.value },
         include: { lineItems: true }
       });
@@ -151,7 +157,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
 
   public async findByOrganization(orgId: OrgId): Promise<Result<Invoice[]>> {
     try {
-      const rows = await this.prisma.invoice.findMany({
+      const rows = await this.db.invoice.findMany({
         where: { organizationId: orgId.value },
         include: { lineItems: true }
       });
@@ -196,7 +202,7 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
 
   public async exists(orgId: OrgId, number: InvoiceNumber): Promise<Result<boolean>> {
     try {
-      const count = await this.prisma.invoice.count({
+      const count = await this.db.invoice.count({
         where: { organizationId: orgId.value, invoiceNumber: number.value }
       });
       return Result.ok(count > 0);
@@ -208,46 +214,14 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
   public async save(invoice: Invoice): Promise<Result<void>> {
     try {
       const { invoice: inv, lines } = InvoiceExtractor.extract(invoice);
-      
-      await this.prisma.$transaction(async (tx) => {
-        await tx.invoice.upsert({
-          where: { id: inv.id },
-          create: {
-            id: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            customerId: inv.customerId,
-            organizationId: inv.organizationId,
-            status: inv.status,
-            totalAmount: inv.grandTotal,
-            currency: inv.currency,
-            issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
-            dueDate: inv.dueDate ? new Date(inv.dueDate) : null
-          },
-          update: {
-            customerId: inv.customerId,
-            organizationId: inv.organizationId,
-            status: inv.status,
-            totalAmount: inv.grandTotal,
-            currency: inv.currency,
-            issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
-            dueDate: inv.dueDate ? new Date(inv.dueDate) : null
-          }
-        });
 
-        // Sync lines
-        await tx.invoiceLineItem.deleteMany({ where: { invoiceId: inv.id } });
-        if (lines.length > 0) {
-          await tx.invoiceLineItem.createMany({
-            data: lines.map((l) => ({
-              id: l.id,
-              invoiceId: inv.id,
-              description: l.description,
-              quantity: l.quantity,
-              price: l.price,
-              amount: l.amount
-            }))
-          });
-        }
+      if (TransactionScope.current) {
+        await this.writeLocked(this.db, inv, lines);
+        return Result.ok();
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await this.writeLocked(tx, inv, lines);
       });
       return Result.ok();
     } catch (err: any) {
@@ -255,9 +229,54 @@ export class PrismaInvoiceRepository implements IInvoiceRepository {
     }
   }
 
+  private async writeLocked(
+    tx: any,
+    inv: Record<string, any>,
+    lines: Array<Record<string, any>>
+  ): Promise<void> {
+    await tx.invoice.upsert({
+      where: { id: inv.id },
+      create: {
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customerId: inv.customerId,
+        organizationId: inv.organizationId,
+        status: inv.status,
+        totalAmount: inv.grandTotal,
+        currency: inv.currency,
+        issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
+        dueDate: inv.dueDate ? new Date(inv.dueDate) : null
+      },
+      update: {
+        customerId: inv.customerId,
+        organizationId: inv.organizationId,
+        status: inv.status,
+        totalAmount: inv.grandTotal,
+        currency: inv.currency,
+        issuedAt: inv.issueDate ? new Date(inv.issueDate) : null,
+        dueDate: inv.dueDate ? new Date(inv.dueDate) : null
+      }
+    });
+
+    // Sync lines
+    await tx.invoiceLineItem.deleteMany({ where: { invoiceId: inv.id } });
+    if (lines.length > 0) {
+      await tx.invoiceLineItem.createMany({
+        data: lines.map((l) => ({
+          id: l.id,
+          invoiceId: inv.id,
+          description: l.description,
+          quantity: l.quantity,
+          price: l.price,
+          amount: l.amount
+        }))
+      });
+    }
+  }
+
   public async delete(id: InvoiceId): Promise<Result<void>> {
     try {
-      await this.prisma.invoice.delete({ where: { id: id.value } });
+      await this.db.invoice.delete({ where: { id: id.value } });
       return Result.ok();
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));

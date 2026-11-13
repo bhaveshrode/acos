@@ -4,6 +4,7 @@ import { SubmitPaymentCommand } from "../commands/SubmitPaymentCommand.js";
 import { PaymentResponseDto } from "../dto/PaymentResponseDto.js";
 import { IPaymentRepository } from "../../../business/payment/repositories/IPaymentRepository.js";
 import { PaymentMapper } from "../mapping/PaymentMapper.js";
+import { IEventBus } from "../../../foundation/events/EventBus.js";
 
 // Domain imports
 import { Payment } from "../../../business/payment/aggregates/Payment.js";
@@ -26,7 +27,8 @@ export class SubmitPaymentCommandHandler
 {
   constructor(
     private readonly repository: IPaymentRepository,
-    private readonly mapper: PaymentMapper
+    private readonly mapper: PaymentMapper,
+    private readonly events: IEventBus
   ) {}
 
   public async handle(
@@ -94,6 +96,10 @@ export class SubmitPaymentCommandHandler
     // Save and commit Payment aggregate
     const saveRes = await this.repository.save(payment);
     if (saveRes.isFailure) return ApplicationResult.failure(saveRes.error.message);
+
+    const events = payment.domainEvents;
+    payment.clearDomainEvents();
+    await this.events.publishAll(events);
 
     return ApplicationResult.success(this.mapper.map(payment));
   }

@@ -4,6 +4,7 @@ import { CreateInvoiceCommand } from "../commands/CreateInvoiceCommand.js";
 import { InvoiceResponseDto } from "../dto/InvoiceResponseDto.js";
 import { IInvoiceRepository } from "../../../business/invoice/repositories/IInvoiceRepository.js";
 import { InvoiceMapper } from "../mapping/InvoiceMapper.js";
+import { IEventBus } from "../../../foundation/events/EventBus.js";
 
 // Domain imports
 import { Invoice } from "../../../business/invoice/aggregates/Invoice.js";
@@ -27,7 +28,8 @@ export class CreateInvoiceCommandHandler
 {
   constructor(
     private readonly repository: IInvoiceRepository,
-    private readonly mapper: InvoiceMapper
+    private readonly mapper: InvoiceMapper,
+    private readonly events: IEventBus
   ) {}
 
   public async handle(
@@ -100,6 +102,10 @@ export class CreateInvoiceCommandHandler
     // Save and commit Invoice aggregate
     const saveRes = await this.repository.save(invoice);
     if (saveRes.isFailure) return ApplicationResult.failure(saveRes.error.message);
+
+    const events = invoice.domainEvents;
+    invoice.clearDomainEvents();
+    await this.events.publishAll(events);
 
     return ApplicationResult.success(this.mapper.map(invoice));
   }
