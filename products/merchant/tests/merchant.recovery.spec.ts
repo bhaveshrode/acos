@@ -8,6 +8,10 @@ import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBound
 import { MerchantBackend } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
 import { PrismaClient } from "@prisma/client";
+import { InMemoryEventBus } from "../../../backend/src/foundation/events/EventBus.js";
+import { EventMetadata } from "../../../backend/src/foundation/events/EventMetadata.js";
+import type { IDomainEvent } from "../../../backend/src/foundation/events/DomainEvent.js";
+import { OutboxEventBus } from "../src/integration/OutboxEventBus.js";
 
 describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () => {
   const logs: LogEntry[] = [];
@@ -21,6 +25,28 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
   let backend: MerchantBackend;
   let frontend: MerchantFrontend;
   let isDbAvailable = false;
+
+  const publishProbe = async (eventName: string): Promise<void> => {
+    const bus = new OutboxEventBus(new InMemoryEventBus(), boundary);
+    const event: IDomainEvent = {
+      eventName,
+      metadata: new EventMetadata({ aggregateId: eventName, aggregateType: "RecoveryProbe" }),
+      occurredOn: new Date(),
+      getAggregateId: () => eventName
+    };
+    await bus.publish(event);
+  };
+
+  const waitFor = async (predicate: () => Promise<boolean>, timeoutMs = 2000): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await predicate()) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return predicate();
+  };
 
   beforeAll(async () => {
     // 1. Check if database is reachable
@@ -117,7 +143,7 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     }, { "Idempotency-Key": idempotencyKey });
     expect(idempResponse.status).toBe(201);
 
-    // 7. Create outbox event by issuing invoice (which triggers outbox write)
+    // 7. Create a DRAFT invoice that is issued and sent after the restart
     const invoice = await frontend.createInvoice({
       customerId: customer.id,
       invoiceNumber: `INV-REC-${Date.now()}`,
@@ -131,9 +157,12 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     });
     expect(invoice.status).toBe("DRAFT");
 
-    const prisma = (boundary as any).prismaClient;
-    const initialOutboxCount = await prisma.outboxEvent.count();
-    expect(initialOutboxCount).toBeGreaterThan(0);
+    // Seed an outbox record through the production writer. Counting the whole
+    // table only passed when another spec file happened to run first and leave
+    // rows behind, so the suite passed or failed depending on file scheduling.
+    const preRestartProbe = `acos.recovery.probe.${Date.now()}.before`;
+    await publishProbe(preRestartProbe);
+    expect(await boundary.prismaClient.outboxEvent.count({ where: { eventType: preRestartProbe } })).toBe(1);
 
     // 8. SIMULATE RESTART (Stop backend and boundary, then rebuild them)
     await backend.stop();
@@ -174,6 +203,21 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     expect(replayedBody.id).toBe(firstBody.id);
 
     // 11. Verify Outbox Event Queue is active and processes events post-restart
+    const survivingProbe = await boundary.prismaClient.outboxEvent.count({
+      where: { eventType: preRestartProbe }
+    });
+    expect(survivingProbe).toBe(1);
+
+    const postRestartProbe = `acos.recovery.probe.${Date.now()}.after`;
+    await publishProbe(postRestartProbe);
+    const processedAfterRestart = await waitFor(async () => {
+      const record = await boundary.prismaClient.outboxEvent.findFirst({
+        where: { eventType: postRestartProbe }
+      });
+      return record?.processed === true;
+    });
+    expect(processedAfterRestart).toBe(true);
+
     await frontend.issueInvoice(invoice.id);
     await frontend.sendInvoice(invoice.id);
 
