@@ -167,6 +167,13 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const gatewayRef = dbPayment.gatewayReference;
     expect(gatewayRef).toBeDefined();
 
+    // Collecting the payment enqueues its own lifecycle transition
+    const processingEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "PaymentProcessingStarted", aggregateId: dbPayment.id }
+    });
+    expect(processingEvt).toBeDefined();
+    expect(processingEvt.processed).toBe(true);
+
     // Trigger webhook simulation
     await frontend.simulateWebhook(gatewayRef, true);
 
@@ -180,6 +187,12 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     });
     expect(outboxEvt).toBeDefined();
     expect(outboxEvt.processed).toBe(true);
+
+    const confirmedEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "PaymentConfirmed", aggregateId: dbPayment.id }
+    });
+    expect(confirmedEvt).toBeDefined();
+    expect(confirmedEvt.processed).toBe(true);
 
     // Verify idempotency record was created
     const idempotencyKey = `key-${Date.now()}`;
@@ -318,5 +331,62 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     const paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
     expect(paymentRow.status).toBe("PROCESSING");
+  });
+
+  it("publishes a declined payment through the outbox", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `webhook_declined_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Declined Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Declined Shop", `declined-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Dana Declined",
+      customerNumber: `CUST-DECLINED-${Date.now()}`,
+      primaryContact: {
+        name: "Dana Declined",
+        email: "dana@example.com",
+        phone: "+1-555-0130"
+      },
+      billingAddress: {
+        line1: "7 Decline Ave",
+        city: "Metropolis",
+        state: "NY",
+        country: "USA",
+        postalCode: "10001"
+      }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-DECLINED-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Declined Services", quantity: 1, unitPrice: 40, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+    await frontend.collectPayment(invoice.id);
+
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, false);
+
+    const paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+    expect(paymentRow.status).toBe("FAILED");
+
+    const failedEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "PaymentFailed", aggregateId: dbPayment.id }
+    });
+    expect(failedEvt).toBeDefined();
+    expect(failedEvt.processed).toBe(true);
+
+    const invoiceRow = await prisma.invoice.findUnique({ where: { id: invoice.id } });
+    expect(invoiceRow.status).toBe("ISSUED");
   });
 });

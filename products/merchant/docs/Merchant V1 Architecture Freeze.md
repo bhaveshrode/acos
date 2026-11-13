@@ -86,6 +86,7 @@ The persistence layer supports two execution contexts:
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
 1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
 2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
+3. The payment lifecycle is enqueued the same way: `PaymentSubmitted` and `PaymentProcessingStarted` when a request is collected, `PaymentAllocated` and `PaymentConfirmed` when the webhook confirms, and `PaymentFailed` when it declines — each inside the transaction that writes the payment row.
 
 ---
 
