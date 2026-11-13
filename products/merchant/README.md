@@ -64,8 +64,8 @@ The merchant validation suite tests integration boundary logic, failure resistan
 *   **Recovery Specs**: Checks that active sessions, outbox queues, and idempotency states survive server restarts.
 *   **Broker Specs**: Proves cross-replica delivery, per-replica dedupe, handler retry and dead-lettering against a real Redis stream (skipped when Redis is unreachable).
 *   **Razorpay Specs**: Covers minor-unit conversion, INR-only collection, gateway-authoritative confirmation, raw-body signature verification and webhook dispatch against a stubbed gateway client.
-*   **Razorpay Live Smoke**: Opt-in (`RAZORPAY_SMOKE=1` with test-mode keys) and skipped by default; dispatched manually to prove Razorpay accepts link creation with the charge in paise. Paying a link to reach `payment_link.paid` is still manual.
-*   **Razorpay Inbound E2E**: Opt-in (`RAZORPAY_E2E=1`) and skipped by default; dispatched manually, it exposes the backend through a public tunnel, prints the webhook URL and a ₹1 test-mode link, then asserts the delivered webhook confirms the payment and settles the invoice.
+*   **Razorpay Live Smoke**: Opt-in (`RAZORPAY_SMOKE=1` with test-mode keys) and skipped by default; dispatched manually to prove Razorpay accepts link creation with the charge in paise. Paying a link still needs a human at the hosted page.
+*   **Razorpay Inbound E2E**: Opt-in (`RAZORPAY_E2E=1`) and skipped by default; dispatched manually, it exposes the backend through a public tunnel, prints the webhook URL and a ₹1 test-mode link, then asserts the delivered webhook confirms the payment and settles the invoice. Run against test mode on 2026-11-13 with a real ₹1 payment: signature accepted, payment `CONFIRMED`, invoice `PAID`, receivable settled.
 *   **Golden E2E Flow**: Resolves a complete signup ──► onboard ──► customer ──► invoice ──► payment collection ──► webhook reconciliation path.
 
 ```bash
