@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
 import { describe, it, expect, beforeEach } from "vitest";
+import { Logger } from "acos-backend";
+import type { LogWriter } from "acos-backend";
+import { Mediator } from "acos-backend/application";
+import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
+import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
+import type { IPaymentProvider, PaymentCompletion, PaymentResponse } from "../src/integration/PaymentProvider.js";
 import {
   RazorpayClient,
   RazorpayPaymentEntity,
@@ -288,5 +294,78 @@ describe("ACOS Merchant — Razorpay Webhook Controller", () => {
 
     expect(response).toEqual({ status: 200, body: { status: "ignored" } });
     expect(calls).toHaveLength(0);
+  });
+});
+
+class FailingInitiationProvider implements IPaymentProvider {
+  public getName(): string {
+    return "razorpay";
+  }
+
+  public async initiatePayment(): Promise<PaymentResponse> {
+    throw new Error("Razorpay payment link request failed (401): Authentication failed");
+  }
+
+  public async completePayment(input: PaymentCompletion): Promise<PaymentResponse> {
+    return { gatewayReference: input.gatewayReference, status: "PROCESSING" };
+  }
+}
+
+describe("ACOS Merchant — Gateway Initiation Failure", () => {
+  it("terminal-fails the payment when the gateway refuses to open a link", async () => {
+    const runtimeFactory = new RuntimeFactory();
+    runtimeFactory.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+    runtimeFactory.health.registerCheck("backend", async () => ({ name: "backend", healthy: true } as any));
+
+    const writer: LogWriter = () => undefined;
+    const boundary = new AcosIntegrationBoundary(new Logger("AcosInitiationFailure", writer), runtimeFactory, {
+      paymentProvider: new FailingInitiationProvider()
+    });
+
+    await boundary.connect("test", undefined, { allowInMemory: true, allowInProcessBus: true });
+
+    try {
+      const user = await boundary.signUp("gateway-failure@example.com", "PasswordPlaintext123!", "Gateway Failure");
+      const org = await boundary.onboardBusiness(
+        user.id,
+        "Failure Store",
+        "failure-store",
+        "INR",
+        "SaaS",
+        "India",
+        "ops@failure-store.test"
+      );
+      const customer = await boundary.createCustomer(user.id, {
+        organizationId: org.id,
+        customerNumber: "CUST-001",
+        name: "Acme Buyer",
+        email: "buyer@acme.test",
+        primaryContact: { name: "Acme Buyer", email: "buyer@acme.test" },
+        billingAddress: { line1: "1 MG Road", city: "Pune", state: "MH", postalCode: "411001", country: "India" }
+      });
+      const invoice = await boundary.createInvoice(user.id, {
+        organizationId: org.id,
+        customerId: customer.id,
+        invoiceNumber: "INV-001",
+        currency: "INR",
+        paymentTerms: "NET_30",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lines: [{ description: "Advisory", quantity: 1, unitPrice: 500, taxRate: 0 }]
+      });
+      await boundary.issueInvoice(user.id, invoice.id);
+      await boundary.sendInvoice(user.id, invoice.id);
+
+      await expect(boundary.createPaymentRequest(user.id, invoice.id)).rejects.toThrow(/payment link request failed/);
+
+      const payments = await boundary.getPayments(user.id, org.id);
+      expect(payments).toHaveLength(1);
+      expect(payments[0].status).toBe("FAILED");
+
+      const stillSent = await boundary.getInvoiceById(user.id, invoice.id);
+      expect(stillSent.status).toBe("SENT");
+    } finally {
+      await boundary.disconnect();
+    }
   });
 });

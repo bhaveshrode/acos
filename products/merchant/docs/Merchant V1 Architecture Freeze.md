@@ -117,14 +117,14 @@ The release criteria baseline is strictly frozen as follows:
 | **Database Tests** | 6 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
 | **Broker Tests** | 7 | Redis required (CI service); skipped when unreachable |
-| **Payment Provider Tests** | 16 | Razorpay adapter, signature verification and webhook dispatch against a stubbed gateway; no network |
-| **Total** | **103** | **All tests must pass cleanly (`103/103 PASS`)** |
+| **Payment Provider Tests** | 17 | Razorpay adapter, signature verification, webhook dispatch and failed initiation against a stubbed gateway; no network |
+| **Total** | **104** | **All tests must pass cleanly (`104/104 PASS`)** |
 
 ---
 
 ## 11. Known Development Fallbacks
 * **Mock Repositories**: Opt-in only. A boundary started without a database URL aborts unless the caller passes `allowInMemory`, so no deployment runs on repositories that lose state at exit. The mock-mode suites pass the flag explicitly.
-* **Sandbox Payment Provider**: The default (`PAYMENT_PROVIDER=sandbox`) simulates the gateway in-process rather than calling a live API. It holds no state, so a simulated callback can be delivered to any process that can reach the database. With `PAYMENT_PROVIDER=razorpay` the boundary instead creates Razorpay Payment Links, returns the hosted URL as `paymentUrl`, and confirms from `payment_link.paid` only after re-reading the payment from Razorpay. Collection is INR-only until international payments are enabled on the account.
+* **Sandbox Payment Provider**: The default (`PAYMENT_PROVIDER=sandbox`) simulates the gateway in-process rather than calling a live API. It holds no state, so a simulated callback can be delivered to any process that can reach the database. With `PAYMENT_PROVIDER=razorpay` the boundary instead creates Razorpay Payment Links, returns the hosted URL as `paymentUrl`, and confirms from `payment_link.paid` only after re-reading the payment from Razorpay. Collection is INR-only until international payments are enabled on the account. If the gateway refuses to open a link, the payment that was already persisted is terminal-failed (`GATEWAY_INITIATION_FAILED`) before the error is returned, so a failed collection does not linger as pending or accumulate on retry.
 * **Local Event Bus**: Opt-in only. A boundary started without `MERCHANT_BROKER_URL` aborts unless the caller passes `allowInProcessBus`, so no deployment silently keeps outbox events inside the process that wrote them. With the flag, durability still comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them, but no other replica ever sees them.
 
 ---

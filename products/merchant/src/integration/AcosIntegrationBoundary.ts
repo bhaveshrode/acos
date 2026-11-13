@@ -102,7 +102,7 @@ import {
   MockAccountsReceivableRepository
 } from "./MockRepositories.js";
 import { SandboxPaymentProvider } from "./SandboxPaymentProvider.js";
-import { IPaymentProvider } from "./PaymentProvider.js";
+import { IPaymentProvider, PaymentResponse } from "./PaymentProvider.js";
 
 export { OutboxEventBus } from "./OutboxEventBus.js";
 export { AcosPasswordHasher } from "./AcosPasswordHasher.js";
@@ -1116,7 +1116,18 @@ export class AcosIntegrationBoundary {
     const paymentDto = result.value;
     const paymentId = paymentDto.id;
 
-    const providerResponse = await this.paymentProvider.initiatePayment(paymentId, paymentAmount, currency);
+    // Gateway I/O stays outside the unit of work so no DB transaction is held
+    // open across an external call.
+    let providerResponse: PaymentResponse;
+    try {
+      providerResponse = await this.paymentProvider.initiatePayment(paymentId, paymentAmount, currency);
+    } catch (error) {
+      // The payment row already exists here. Leaving it pending would make a
+      // failed collection look like money in flight, and the next retry would
+      // add another one, so it is terminal-failed before the error surfaces.
+      await this.recordGatewayInitiationFailure(paymentId, error);
+      throw error;
+    }
 
     const payment = await this.withinTransaction(async () => {
       const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
@@ -1150,6 +1161,48 @@ export class AcosIntegrationBoundary {
     const mapper = new PaymentMapper();
     const dto = mapper.map(payment);
     return providerResponse.paymentUrl ? { ...dto, paymentUrl: providerResponse.paymentUrl } : dto;
+  }
+
+  /**
+   * Terminal-fails a payment whose gateway link could not be opened. The
+   * original gateway error is what the caller needs, so a failure to record
+   * this is logged rather than thrown.
+   */
+  private async recordGatewayInitiationFailure(paymentId: string, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.warn("createPaymentRequest: Gateway refused to open a payment; marking it failed.", {
+      paymentId,
+      error: message
+    });
+
+    try {
+      await this.withinTransaction(async () => {
+        const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+        if (paymentRes.isFailure) {
+          throw new Error(paymentRes.error.message);
+        }
+
+        const payment = paymentRes.value;
+        const failRes = failPayment(payment, new UniqueEntityID(), "GATEWAY_INITIATION_FAILED", message);
+        if (failRes.isFailure) {
+          throw new Error(failRes.error.message);
+        }
+
+        const saveRes = await this.paymentRepository.save(payment);
+        if (saveRes.isFailure) {
+          throw new Error(saveRes.error.message);
+        }
+
+        const events = payment.domainEvents;
+        payment.clearDomainEvents();
+        await this.eventBus.publishAll(events);
+      });
+    } catch (compensationError) {
+      this.logger.error(
+        "createPaymentRequest: Could not record the gateway failure; the payment remains pending.",
+        compensationError
+      );
+    }
   }
 
   /**
