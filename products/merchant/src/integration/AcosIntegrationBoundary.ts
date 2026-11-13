@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
 import { ACOSRuntime } from "acos-runtime";
 import {
   Logger,
@@ -116,6 +117,7 @@ export { SandboxPaymentProvider, PaymentResponse, IPaymentProvider } from "./San
 export const OUTBOX_MAX_ATTEMPTS = 10;
 export const OUTBOX_BASE_RETRY_DELAY_MS = 1_000;
 export const OUTBOX_MAX_RETRY_DELAY_MS = 5 * 60_000;
+export const OUTBOX_LOCK_LEASE_MS = 30_000;
 
 export interface ConnectOptions {
   /**
@@ -150,6 +152,7 @@ export class AcosIntegrationBoundary {
   private outboxDrainPending = false;
   private outboxRetryTimer: NodeJS.Timeout | null = null;
   private outboxRetryAt = 0;
+  private readonly outboxClaimId = randomUUID();
 
   // Sandbox provider context
   public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
@@ -221,14 +224,7 @@ export class AcosIntegrationBoundary {
     this.isProcessingOutbox = true;
 
     try {
-      const records = await this.prismaClient.outboxEvent.findMany({
-        where: {
-          processed: false,
-          deadLetteredAt: null,
-          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }]
-        },
-        orderBy: { createdAt: "asc" }
-      });
+      const records = await this.claimOutboxBatch();
 
       const rawBus = (this.eventBus as OutboxEventBus).underlyingBus;
       for (const record of records) {
@@ -246,7 +242,9 @@ export class AcosIntegrationBoundary {
                 retryCount,
                 lastError,
                 nextAttemptAt: null,
-                deadLetteredAt: new Date()
+                deadLetteredAt: new Date(),
+                lockedBy: null,
+                lockedUntil: null
               }
             });
             this.logger.warn("Outbox event dead-lettered after repeated delivery failures", {
@@ -263,7 +261,9 @@ export class AcosIntegrationBoundary {
             data: {
               retryCount,
               lastError,
-              nextAttemptAt
+              nextAttemptAt,
+              lockedBy: null,
+              lockedUntil: null
             }
           });
           this.scheduleOutboxRetry(nextAttemptAt);
@@ -276,7 +276,9 @@ export class AcosIntegrationBoundary {
             processed: true,
             processedAt: new Date(),
             lastError: null,
-            nextAttemptAt: null
+            nextAttemptAt: null,
+            lockedBy: null,
+            lockedUntil: null
           }
         });
       }
@@ -285,6 +287,51 @@ export class AcosIntegrationBoundary {
     } finally {
       this.isProcessingOutbox = false;
     }
+  }
+
+  /**
+   * Claims one batch for this process. The claim is an updateMany guarded on the
+   * lock being free, so two drainers racing over the same rows claim disjoint
+   * sets; reading back by claim id keeps rows another process holds out of the
+   * batch. Locks expire, so a drainer that dies mid-publish frees its rows.
+   */
+  private async claimOutboxBatch(): Promise<any[]> {
+    const now = new Date();
+    const candidates = await this.prismaClient.outboxEvent.findMany({
+      where: {
+        processed: false,
+        deadLetteredAt: null,
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+        AND: [{ OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] }]
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true }
+    });
+
+    if (candidates.length === 0) return [];
+
+    await this.prismaClient.outboxEvent.updateMany({
+      where: {
+        id: { in: candidates.map((candidate: any) => candidate.id) },
+        processed: false,
+        deadLetteredAt: null,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }]
+      },
+      data: {
+        lockedBy: this.outboxClaimId,
+        lockedUntil: new Date(now.getTime() + OUTBOX_LOCK_LEASE_MS)
+      }
+    });
+
+    return this.prismaClient.outboxEvent.findMany({
+      where: {
+        lockedBy: this.outboxClaimId,
+        processed: false,
+        deadLetteredAt: null,
+        lockedUntil: { gt: new Date() }
+      },
+      orderBy: { createdAt: "asc" }
+    });
   }
 
   private outboxRetryDelayMs(retryCount: number): number {

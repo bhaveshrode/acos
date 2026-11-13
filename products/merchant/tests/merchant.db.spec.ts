@@ -485,4 +485,56 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
       await prisma.outboxEvent.deleteMany({ where: { eventType } });
     }
   });
+
+  it("claims outbox rows so two drainers deliver each event once", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const prisma = (boundary as any).prismaClient;
+    const eventType = `acos.outbox.claim_probe.${Date.now()}`;
+    let delivered = 0;
+    const handler = {
+      handle: async () => {
+        delivered++;
+      }
+    };
+    boundary.eventBus.subscribe(eventType, handler as any);
+
+    const runtimeFactory2 = new RuntimeFactory();
+    runtimeFactory2.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+    runtimeFactory2.health.registerCheck("backend", async () => ({
+      name: "backend",
+      healthy: true
+    } as any));
+    const second = new AcosIntegrationBoundary(new Logger("AcosDbBoundarySecond", writer), runtimeFactory2);
+
+    try {
+      await second.connect("test", dbUrl);
+
+      const row = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "claim-probe",
+          payload: JSON.stringify({ metadata: { aggregateId: "claim-probe" }, eventName: eventType }),
+          processed: false
+        }
+      });
+
+      await Promise.all([
+        boundary.processOutboxAsynchronously(),
+        second.processOutboxAsynchronously()
+      ]);
+
+      const after = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(after.processed).toBe(true);
+      expect(after.lockedBy).toBeNull();
+      expect(after.lockedUntil).toBeNull();
+      expect(delivered).toBe(1);
+    } finally {
+      boundary.eventBus.unsubscribe(eventType, handler as any);
+      await second.disconnect();
+      await prisma.outboxEvent.deleteMany({ where: { eventType } });
+    }
+  });
 });
