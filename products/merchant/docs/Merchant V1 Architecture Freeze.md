@@ -77,7 +77,7 @@ Sign Up ──► Login ──► Onboard Business ──► Create Customer ─
 
 ## 6. Persistence Architecture
 The persistence layer supports two execution contexts:
-1. **Mock Context (Development Fallback)**: In-memory repository registries mapping data to local collections for rapid testing.
+1. **Mock Context (Opt-In Development Fallback)**: In-memory repository registries mapping data to local collections for rapid testing. Selected only when the caller passes `allowInMemory`; a boundary started without a database URL otherwise refuses to start.
 2. **Persistent Context (Production Mode)**: Relational tables mapped to PostgreSQL using Prisma Client. Repositories utilize transaction boundaries (`$transaction`) to enforce financial ledger consistency. The accounts receivable ledger (`ReceivableAccount` with its entry, credit, application and collection-action rows) lives here too, so balances survive a restart. The business profile (`BusinessProfile`, with the owning user on the `Organization` row) is stored here as well, so onboarding metadata and tenant ownership resolve through a fresh process instead of an in-memory registry.
 
 ---
@@ -112,17 +112,17 @@ The release criteria baseline is strictly frozen as follows:
 | :--- | :--- | :--- |
 | **Integration Tests** | 61 | Local Express server (Loopback port 9001) |
 | **Golden E2E Flow** | 1 | Complete signup-to-reconciliation path (Port 9002) |
-| **Failure Tests** | 9 | Infrastructure and network degradation tests (Port 9003) |
+| **Failure Tests** | 10 | Infrastructure and network degradation tests (Port 9003) |
 | **Database Tests** | 5 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
-| **Total** | **77** | **All tests must pass cleanly (`77/77 PASS`)** |
+| **Total** | **78** | **All tests must pass cleanly (`78/78 PASS`)** |
 
 ---
 
 ## 11. Known Development Fallbacks
-* **Mock Repositories**: Default to in-memory mocks when database URLs are omitted.
+* **Mock Repositories**: Opt-in only. A boundary started without a database URL aborts unless the caller passes `allowInMemory`, so no deployment runs on repositories that lose state at exit. The mock-mode suites pass the flag explicitly.
 * **Sandbox Payment Provider**: Simulates provider integrations rather than querying live Stripe endpoints. It holds no in-process state, so a simulated callback can be delivered to any process that can reach the database.
-* **Local Event Bus**: Utilizes in-memory dispatching rather than external message queues (e.g. RabbitMQ/Kafka).
+* **Local Event Bus**: Utilizes in-memory dispatching rather than external message queues (e.g. RabbitMQ/Kafka). Durability comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them.
 
 ---
 

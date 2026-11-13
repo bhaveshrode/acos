@@ -45,7 +45,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     frontend = new MerchantFrontend(backend, writer);
 
     // Bootstrap
-    await boundary.connect("test");
+    await boundary.connect("test", undefined, { allowInMemory: true });
     await backend.start();
   });
 
