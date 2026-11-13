@@ -64,6 +64,7 @@ The merchant validation suite tests integration boundary logic, failure resistan
 *   **Recovery Specs**: Checks that active sessions, outbox queues, and idempotency states survive server restarts.
 *   **Broker Specs**: Proves cross-replica delivery, per-replica dedupe, handler retry and dead-lettering against a real Redis stream (skipped when Redis is unreachable).
 *   **Razorpay Specs**: Covers minor-unit conversion, INR-only collection, gateway-authoritative confirmation, raw-body signature verification and webhook dispatch against a stubbed gateway client.
+*   **Razorpay Live Smoke**: Opt-in (`RAZORPAY_SMOKE=1` with test-mode keys) and skipped by default; dispatched manually to prove Razorpay accepts link creation with the charge in paise. Paying a link to reach `payment_link.paid` is still manual.
 *   **Golden E2E Flow**: Resolves a complete signup ──► onboard ──► customer ──► invoice ──► payment collection ──► webhook reconciliation path.
 
 ```bash

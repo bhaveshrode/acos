@@ -1,0 +1,37 @@
+name: Razorpay Live Smoke
+
+# Manual dispatch only: this job spends real test-mode gateway credentials, so it
+# must never run on push or pull request events.
+on:
+  workflow_dispatch:
+
+jobs:
+  razorpay-smoke:
+    name: Razorpay Test-Mode Smoke
+    runs-on: ubuntu-latest
+
+    env:
+      RAZORPAY_SMOKE: "1"
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Verify smoke credentials are present
+        run: |
+          test -n "$RAZORPAY_KEY_ID" || { echo "::error::RAZORPAY_KEY_ID secret is missing"; exit 1; }
+          test -n "$RAZORPAY_KEY_SECRET" || { echo "::error::RAZORPAY_KEY_SECRET secret is missing"; exit 1; }
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Create a test-mode payment link
+        run: npm run test --workspace=acos-merchant -- merchant.razorpay.live
