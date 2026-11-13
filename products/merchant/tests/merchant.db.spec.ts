@@ -177,4 +177,57 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(idempRec).toBeDefined();
     expect(idempRec.statusCode).toBe(201);
   });
+
+  it("stores monetary amounts without binary floating point drift", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    // 3 x 0.1 is 0.30000000000000004 in float arithmetic. The domain computes it
+    // as 30 minor units, so the column has to hand it back as exactly 0.3.
+    const email = `money_valid_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Money Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Money Shop", `money-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Decimal Dan",
+      customerNumber: `CUST-MONEY-${Date.now()}`,
+      primaryContact: {
+        name: "Decimal Dan",
+        email: "dan@example.com",
+        phone: "+1-555-0110"
+      },
+      billingAddress: {
+        line1: "1 Minor Unit Way",
+        city: "Metropolis",
+        state: "NY",
+        country: "USA",
+        postalCode: "10001"
+      }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-MONEY-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Thirds of a dollar", quantity: 3, unitPrice: 0.1, taxRate: 0 }]
+    });
+
+    const prisma = (boundary as any).prismaClient;
+    const row = await prisma.invoice.findUnique({
+      where: { id: invoice.id },
+      include: { lineItems: true }
+    });
+
+    expect(row.lineItems).toHaveLength(1);
+    expect(row.lineItems[0].price.toString()).toBe("0.1");
+    expect(row.lineItems[0].amount.toString()).toBe("0.3");
+    expect(row.totalAmount.toString()).toBe("0.3");
+    expect(row.lineItems[0].price.toNumber()).toBe(0.1);
+    expect(row.totalAmount.toNumber()).toBe(0.3);
+  });
 });

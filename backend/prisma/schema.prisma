@@ -62,7 +62,7 @@ model Invoice {
   customerId    String
   organizationId String           @default("default-org-id")
   status        String            // DRAFT, ISSUED, SENT, PAID, OVERDUE, CANCELLED
-  totalAmount   Float
+  totalAmount   Decimal @db.Decimal(18, 4)
   currency      String
   issuedAt      DateTime?
   dueDate       DateTime?
@@ -77,8 +77,8 @@ model InvoiceLineItem {
   invoiceId   String
   description String
   quantity    Int
-  price       Float
-  amount      Float
+  price       Decimal @db.Decimal(18, 4)
+  amount      Decimal @db.Decimal(18, 4)
   invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
@@ -87,7 +87,7 @@ model Payment {
   organizationId   String
   invoiceId        String
   reference        String
-  amount           Float
+  amount           Decimal @db.Decimal(18, 4)
   currency         String
   status           String
   gatewayReference String
