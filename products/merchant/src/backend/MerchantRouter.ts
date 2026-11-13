@@ -12,7 +12,8 @@ export class MerchantRouter {
       method: string,
       path: string,
       payload?: any,
-      headers?: Record<string, string>
+      headers?: Record<string, string>,
+      rawBody?: string
     ): Promise<{ status: number; body: any } | null>;
   }>;
 
@@ -51,13 +52,14 @@ export class MerchantRouter {
     method: string,
     path: string,
     payload?: any,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    rawBody?: string
   ): Promise<{ status: number; body: any }> {
     this.logger.info("Received request", { method, path });
 
     try {
       for (const controller of this.controllers) {
-        const result = await controller.handle(method, path, payload, headers);
+        const result = await controller.handle(method, path, payload, headers, rawBody);
         if (result !== null) {
           return result;
         }

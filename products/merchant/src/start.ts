@@ -2,7 +2,13 @@ import { Logger, LogEntry } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "./configuration/MerchantConfig.js";
-import { AcosIntegrationBoundary } from "./integration/AcosIntegrationBoundary.js";
+import {
+  AcosIntegrationBoundary,
+  IPaymentProvider,
+  RazorpayPaymentProvider,
+  RazorpayRestClient,
+  SandboxPaymentProvider
+} from "./integration/AcosIntegrationBoundary.js";
 import { MerchantBackend } from "./backend/MerchantBackend.js";
 
 // Standard console log writer for staging/production
@@ -29,9 +35,18 @@ async function startServer() {
 
   mainLogger.info("Initializing ACOS Integration Boundary...");
   const boundaryLogger = new Logger("AcosDbBoundary", writer);
+  const paymentProvider: IPaymentProvider =
+    config.paymentProvider === "razorpay"
+      ? new RazorpayPaymentProvider(
+          new RazorpayRestClient(config.razorpayKeyId!, config.razorpayKeySecret!)
+        )
+      : new SandboxPaymentProvider();
+  mainLogger.info("Payment provider selected", { provider: paymentProvider.getName() });
+
   const boundary = new AcosIntegrationBoundary(boundaryLogger, runtimeFactory, {
     brokerUrl: config.brokerUrl ?? undefined,
-    replicaId: config.replicaId
+    replicaId: config.replicaId,
+    paymentProvider
   });
 
   mainLogger.info("Instantiating Merchant Backend Server...");

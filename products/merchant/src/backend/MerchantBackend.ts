@@ -164,8 +164,15 @@ export class MerchantBackend {
     try {
       this.eventConsumer.subscribe();
 
-      // Setup Express routes
-      this.app.use(express.json());
+      // Setup Express routes. The raw body is kept so gateway signatures can be
+      // verified over the exact bytes that were signed, not a re-serialization.
+      this.app.use(
+        express.json({
+          verify: (req: any, _res: any, buf: Buffer) => {
+            req.rawBody = buf.toString("utf8");
+          }
+        })
+      );
 
       // Track 11.7: Correlation ID middleware
       this.app.use((req: any, res: any, next: any) => {
@@ -194,7 +201,7 @@ export class MerchantBackend {
           }
         }
 
-        const response = await this.router.handleRequestInternal(req.method, req.path, req.body, headers);
+        const response = await this.router.handleRequestInternal(req.method, req.path, req.body, headers, req.rawBody);
 
         // Track 11.5: Save response under Idempotency-Key
         if (idempotencyKey && (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") && response.status < 500) {
@@ -274,7 +281,8 @@ export class MerchantBackend {
       };
     }
 
-    if (path === "/payments/webhook" && (!headers || (!headers["Stripe-Signature"] && !headers["stripe-signature"]))) {
+    const simulatedGateway = this.config.paymentProvider !== "razorpay";
+    if (simulatedGateway && path === "/payments/webhook" && (!headers || (!headers["Stripe-Signature"] && !headers["stripe-signature"]))) {
       const t = Math.floor(Date.now() / 1000).toString();
       const secret = this.config.stripeWebhookSecret;
       const signature = crypto

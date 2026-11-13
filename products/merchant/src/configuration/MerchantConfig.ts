@@ -1,5 +1,7 @@
 import os from "node:os";
 
+export type PaymentProviderName = "sandbox" | "razorpay";
+
 export interface IMerchantConfig {
   port: number;
   env: string;
@@ -9,6 +11,10 @@ export interface IMerchantConfig {
   stripeWebhookSecret?: string;
   brokerUrl?: string | null;
   replicaId?: string;
+  paymentProvider?: PaymentProviderName;
+  razorpayKeyId?: string;
+  razorpayKeySecret?: string;
+  razorpayWebhookSecret?: string;
 }
 
 export class MerchantConfig implements IMerchantConfig {
@@ -20,6 +26,10 @@ export class MerchantConfig implements IMerchantConfig {
   public readonly stripeWebhookSecret: string;
   public readonly brokerUrl: string | null;
   public readonly replicaId: string;
+  public readonly paymentProvider: PaymentProviderName;
+  public readonly razorpayKeyId: string | null;
+  public readonly razorpayKeySecret: string | null;
+  public readonly razorpayWebhookSecret: string | null;
 
   constructor(props: IMerchantConfig) {
     this.port = props.port;
@@ -30,6 +40,10 @@ export class MerchantConfig implements IMerchantConfig {
     this.stripeWebhookSecret = props.stripeWebhookSecret ?? "whsec_stripe_test_secret_123456789";
     this.brokerUrl = props.brokerUrl ?? null;
     this.replicaId = props.replicaId ?? os.hostname();
+    this.paymentProvider = props.paymentProvider ?? "sandbox";
+    this.razorpayKeyId = props.razorpayKeyId ?? null;
+    this.razorpayKeySecret = props.razorpayKeySecret ?? null;
+    this.razorpayWebhookSecret = props.razorpayWebhookSecret ?? null;
     this.validate();
   }
 
@@ -58,6 +72,22 @@ export class MerchantConfig implements IMerchantConfig {
     if (!this.replicaId || this.replicaId.trim() === "") {
       throw new Error("MerchantConfig Validation Error: Replica id must be defined.");
     }
+    if (this.paymentProvider !== "sandbox" && this.paymentProvider !== "razorpay") {
+      throw new Error(
+        `MerchantConfig Validation Error: Payment provider '${this.paymentProvider}' is not supported. Use 'sandbox' or 'razorpay'.`
+      );
+    }
+    if (this.paymentProvider === "razorpay") {
+      if (!this.razorpayKeyId || !this.razorpayKeyId.startsWith("rzp_")) {
+        throw new Error("MerchantConfig Validation Error: Razorpay key id must be defined and start with 'rzp_'.");
+      }
+      if (!this.razorpayKeySecret || this.razorpayKeySecret.trim() === "") {
+        throw new Error("MerchantConfig Validation Error: Razorpay key secret must be defined.");
+      }
+      if (!this.razorpayWebhookSecret || this.razorpayWebhookSecret.trim() === "") {
+        throw new Error("MerchantConfig Validation Error: Razorpay webhook secret must be defined.");
+      }
+    }
   }
 
   /**
@@ -72,7 +102,11 @@ export class MerchantConfig implements IMerchantConfig {
       enableAcosFeatures: overrides.enableAcosFeatures ?? (process.env.ENABLE_ACOS_FEATURES === "true" || true),
       stripeWebhookSecret: overrides.stripeWebhookSecret ?? (process.env.STRIPE_WEBHOOK_SECRET ?? "whsec_stripe_test_secret_123456789"),
       brokerUrl: overrides.brokerUrl ?? (process.env.MERCHANT_BROKER_URL ?? null),
-      replicaId: overrides.replicaId ?? (process.env.MERCHANT_REPLICA_ID ?? os.hostname())
+      replicaId: overrides.replicaId ?? (process.env.MERCHANT_REPLICA_ID ?? os.hostname()),
+      paymentProvider: overrides.paymentProvider ?? ((process.env.PAYMENT_PROVIDER as PaymentProviderName) ?? "sandbox"),
+      razorpayKeyId: overrides.razorpayKeyId ?? process.env.RAZORPAY_KEY_ID,
+      razorpayKeySecret: overrides.razorpayKeySecret ?? process.env.RAZORPAY_KEY_SECRET,
+      razorpayWebhookSecret: overrides.razorpayWebhookSecret ?? process.env.RAZORPAY_WEBHOOK_SECRET
     });
   }
 }

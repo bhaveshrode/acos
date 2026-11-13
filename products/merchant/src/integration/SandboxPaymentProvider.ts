@@ -1,16 +1,4 @@
-export interface PaymentResponse {
-  gatewayReference: string;
-  status: "PROCESSING" | "SUCCEEDED" | "FAILED";
-  transactionHash?: string;
-  errorCode?: string;
-  errorMessage?: string;
-}
-
-export interface IPaymentProvider {
-  getName(): string;
-  initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse>;
-  completePayment(gatewayReference: string, success: boolean): Promise<PaymentResponse>;
-}
+import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentProvider.js";
 
 /**
  * Concrete implementation of IPaymentProvider simulating payment logic.
@@ -33,16 +21,16 @@ export class SandboxPaymentProvider implements IPaymentProvider {
     };
   }
 
-  public async completePayment(gatewayReference: string, success: boolean): Promise<PaymentResponse> {
-    if (success) {
+  public async completePayment(input: PaymentCompletion): Promise<PaymentResponse> {
+    if (input.success) {
       return {
-        gatewayReference,
+        gatewayReference: input.gatewayReference,
         status: "SUCCEEDED",
         transactionHash: `tx-hash-${Math.random().toString(36).substring(2, 15).toUpperCase()}`
       };
     } else {
       return {
-        gatewayReference,
+        gatewayReference: input.gatewayReference,
         status: "FAILED",
         errorCode: "INSUFFICIENT_FUNDS",
         errorMessage: "Simulated sandbox transaction declined due to insufficient customer balances."
