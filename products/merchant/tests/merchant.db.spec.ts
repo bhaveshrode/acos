@@ -4,7 +4,10 @@ import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
-import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
+import {
+  AcosIntegrationBoundary,
+  OUTBOX_MAX_ATTEMPTS
+} from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
 import { PrismaClient } from "@prisma/client";
@@ -419,5 +422,67 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     const invoiceRow = await prisma.invoice.findUnique({ where: { id: invoice.id } });
     expect(invoiceRow.status).toBe("ISSUED");
+  });
+
+  it("backs off, caps, and dead-letters undeliverable outbox events", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const prisma = (boundary as any).prismaClient;
+    const eventType = `acos.outbox.retry_probe.${Date.now()}`;
+    const handler = {
+      handle: async () => {
+        throw new Error("probe delivery failure");
+      }
+    };
+    boundary.eventBus.subscribe(eventType, handler as any);
+
+    try {
+      const row = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "retry-probe",
+          payload: JSON.stringify({ metadata: { aggregateId: "retry-probe" }, eventName: eventType }),
+          processed: false
+        }
+      });
+
+      await boundary.processOutboxAsynchronously();
+
+      const afterFirstFailure = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(afterFirstFailure.processed).toBe(false);
+      expect(afterFirstFailure.retryCount).toBe(1);
+      expect(afterFirstFailure.lastError).toContain("probe delivery failure");
+      expect(afterFirstFailure.nextAttemptAt).not.toBeNull();
+      expect(afterFirstFailure.nextAttemptAt.getTime()).toBeGreaterThan(Date.now());
+      expect(afterFirstFailure.deadLetteredAt).toBeNull();
+
+      // A drain before the backoff elapses must leave the row untouched.
+      await boundary.processOutboxAsynchronously();
+      const afterEarlyDrain = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(afterEarlyDrain.retryCount).toBe(1);
+
+      // Put the row on its last allowed attempt; the next failure dead-letters it.
+      await prisma.outboxEvent.update({
+        where: { id: row.id },
+        data: { retryCount: OUTBOX_MAX_ATTEMPTS - 1, nextAttemptAt: null }
+      });
+      await boundary.processOutboxAsynchronously();
+
+      const deadLettered = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(deadLettered.processed).toBe(false);
+      expect(deadLettered.retryCount).toBe(OUTBOX_MAX_ATTEMPTS);
+      expect(deadLettered.deadLetteredAt).not.toBeNull();
+      expect(deadLettered.nextAttemptAt).toBeNull();
+
+      // Dead-lettered rows are never delivered again.
+      await boundary.processOutboxAsynchronously();
+      const afterFinalDrain = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(afterFinalDrain.retryCount).toBe(OUTBOX_MAX_ATTEMPTS);
+    } finally {
+      boundary.eventBus.unsubscribe(eventType, handler as any);
+      await prisma.outboxEvent.deleteMany({ where: { eventType } });
+    }
   });
 });
