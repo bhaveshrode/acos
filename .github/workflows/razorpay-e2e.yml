@@ -1,0 +1,101 @@
+name: Razorpay Inbound E2E
+
+# Manual dispatch only: this job waits for a human to pay a real test-mode
+# Payment Link, so it never runs on push or pull request events.
+on:
+  workflow_dispatch:
+
+jobs:
+  inbound-e2e:
+    name: Razorpay Inbound E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: acos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      RAZORPAY_E2E: "1"
+      RAZORPAY_E2E_REQUIRE_TUNNEL: "1"
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+      MERCHANT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/acos?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/acos?schema=public
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Verify E2E credentials are present
+        run: |
+          test -n "$RAZORPAY_KEY_ID" || { echo "::error::RAZORPAY_KEY_ID secret is missing"; exit 1; }
+          test -n "$RAZORPAY_KEY_SECRET" || { echo "::error::RAZORPAY_KEY_SECRET secret is missing"; exit 1; }
+          test -n "$RAZORPAY_WEBHOOK_SECRET" || { echo "::error::RAZORPAY_WEBHOOK_SECRET secret is missing"; exit 1; }
+
+      # Publishes the service on a public HTTPS hostname so Razorpay can deliver
+      # payment_link.paid. Quick tunnels get a new hostname per run, which is why
+      # the URL is printed before the payment step.
+      - name: Start public tunnel
+        run: |
+          curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+          nohup /tmp/cloudflared tunnel --url http://localhost:8090 --metrics 127.0.0.1:20241 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+          echo "cloudflared started"
+
+      - name: Publish the webhook URL
+        run: |
+          for _ in $(seq 1 30); do
+            HOST=$(curl -sS http://127.0.0.1:20241/quicktunnel 2>/dev/null | sed -n 's/.*"hostname":"\([^"]*\)".*/\1/p')
+            if [ -n "$HOST" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$HOST" ]; then
+            echo "::error::Tunnel did not come up"
+            tail -40 /tmp/cloudflared.log
+            exit 1
+          fi
+          echo "WEBHOOK URL: https://$HOST/payments/webhook"
+          {
+            echo "### Webhook URL"
+            echo ""
+            echo "Paste this into the Razorpay webhook (test mode), subscribed to payment_link.paid:"
+            echo ""
+            echo '```'
+            echo "https://$HOST/payments/webhook"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Generate Prisma Clients
+        run: npm run prisma:generate --workspace=acos-backend
+
+      - name: Run Database Migrations
+        run: npm run prisma:migrate --workspace=acos-backend
+
+      - name: Pay the printed link and wait for the webhook
+        run: npm run test --workspace=acos-merchant -- merchant.razorpay.inbound
+
+      - name: Show tunnel log
+        if: always()
+        run: tail -60 /tmp/cloudflared.log
