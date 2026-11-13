@@ -12,7 +12,7 @@ import {
   UserStatus,
   LoginAttempt
 } from "acos-backend";
-import { UserSerializer } from "acos-backend/adapters";
+import { UserSerializer } from "../../adapters/persistence/serializers/UserSerializer.js";
 
 export class PrismaUserRepository implements IUserRepository {
   constructor(private prisma: PrismaClient) {}

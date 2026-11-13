@@ -3,7 +3,6 @@
   "include": [],
   "files": [
     "src/kernel/index.ts",
-    "src/kernel/application.ts",
-    "src/kernel/adapters.ts"
+    "src/kernel/application.ts"
   ]
 }

@@ -8,10 +8,8 @@ import {
   CustomerNumber,
   OrganizationId as OrgId
 } from "acos-backend";
-import {
-  CustomerExtractor,
-  CustomerHydrator
-} from "acos-backend/adapters";
+import { CustomerExtractor } from "../../adapters/persistence/extractors/CustomerExtractor.js";
+import { CustomerHydrator } from "../../adapters/persistence/hydrators/CustomerHydrator.js";
 
 export class PrismaCustomerRepository implements ICustomerRepository {
   constructor(private prisma: PrismaClient) {}

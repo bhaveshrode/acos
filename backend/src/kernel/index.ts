@@ -5,7 +5,7 @@
  * explicit on purpose: adding a symbol is a reviewed decision, and
  * `surface.spec.ts` fails if a wildcard export creeps back in, if the surface
  * grows past its pinned size, or if a consumer reaches past a declared entry
- * point. The other two entry points are `./application` and `./adapters`.
+ * point. The only other entry point is `./application`.
  *
  * Aggregate state shapes (`*Props`) are deliberately not exported: they are
  * persistence and rehydration detail, not part of the contract.

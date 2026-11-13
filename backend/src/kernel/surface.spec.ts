@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as kernel from "./index.js";
 import * as application from "./application.js";
-import * as adapters from "./adapters.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "../..");
@@ -12,9 +11,8 @@ const repoRoot = join(here, "../../..");
 
 const SURFACE_SIZE = 364;
 const APPLICATION_SIZE = 29;
-const ADAPTER_SIZE = 12;
-const ALLOWED_SUBPATHS = ["application", "adapters"];
-const ENTRY_FILES = ["index.ts", "application.ts", "adapters.ts"];
+const ALLOWED_SUBPATHS = ["application"];
+const ENTRY_FILES = ["index.ts", "application.ts"];
 
 const read = (path: string): string => readFileSync(path, "utf8");
 
@@ -45,7 +43,6 @@ describe("kernel surface conformance", () => {
   it("locks the size of each entry point", () => {
     expect(exportedNames(read(join(here, "index.ts")))).toHaveLength(SURFACE_SIZE);
     expect(exportedNames(read(join(here, "application.ts")))).toHaveLength(APPLICATION_SIZE);
-    expect(exportedNames(read(join(here, "adapters.ts")))).toHaveLength(ADAPTER_SIZE);
   });
 
   it("exports no aggregate state shapes and no duplicate names", () => {
@@ -74,15 +71,14 @@ describe("kernel surface conformance", () => {
     expect(kernel.Money).toBeTypeOf("function");
     expect(kernel.SettlementTransactionHash).toBeTypeOf("function");
     expect(application.Mediator).toBeTypeOf("function");
-    expect(adapters.PaymentSerializer).toBeTypeOf("function");
   });
 
-  it("declares exactly three entry points, none of them a wildcard", () => {
+  it("declares exactly two entry points, none of them a wildcard", () => {
     const pkg = JSON.parse(read(join(packageRoot, "package.json"))) as {
       exports: Record<string, string>;
     };
     const keys = Object.keys(pkg.exports).sort();
-    expect(keys).toEqual([".", "./adapters", "./application", "./package.json"]);
+    expect(keys).toEqual([".", "./application", "./package.json"]);
     expect(keys.filter((key) => key.includes("*"))).toEqual([]);
 
     for (const [key, target] of Object.entries(pkg.exports)) {

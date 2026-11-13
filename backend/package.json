@@ -8,7 +8,6 @@
   "exports": {
     ".": "./src/kernel/index.ts",
     "./application": "./src/kernel/application.ts",
-    "./adapters": "./src/kernel/adapters.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
