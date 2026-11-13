@@ -1,5 +1,4 @@
-import type { Invoice } from "acos-backend";
-import { InvoiceId } from "acos-backend";
+import { Invoice, InvoiceId } from "acos-backend";
 import { InvoiceSnapshot } from "../snapshots/InvoiceSnapshot.js";
 import { InvoiceDeserializer } from "../deserializers/InvoiceDeserializer.js";
 
