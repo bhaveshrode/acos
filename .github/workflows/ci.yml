@@ -70,3 +70,32 @@ jobs:
       - name: Run ACOS Merchant Spec Suites
         run: |
           npm run test --workspace=acos-merchant
+
+  kernel:
+    name: Kernel Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Generate Prisma Clients
+        run: |
+          npx prisma generate --schema=backend/prisma/schema.prisma
+
+      - name: Type Check & Build Kernel
+        run: |
+          npm run build --workspace=acos-backend
+
+      - name: Run Kernel Spec Suites
+        run: |
+          npm run test --workspace=acos-backend
