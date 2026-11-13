@@ -1,12 +1,14 @@
 import crypto from "crypto";
 import { BaseController } from "./BaseController.js";
+import { normalizeRazorpayEvent, verifyRazorpaySignature } from "../../integration/RazorpayWebhook.js";
 
 export class PaymentController extends BaseController {
   public async handle(
     method: string,
     path: string,
     payload?: any,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    rawBody?: string
   ): Promise<{ status: number; body: any } | null> {
     if (method === "POST" && path.startsWith("/business/invoices/") && path.endsWith("/collect-payment")) {
       const token = this.extractBearerToken(headers);
@@ -46,6 +48,10 @@ export class PaymentController extends BaseController {
     }
 
     if (method === "POST" && path === "/payments/webhook") {
+      if (this.config.paymentProvider === "razorpay") {
+        return this.handleRazorpayWebhook(payload, headers, rawBody);
+      }
+
       const signatureHeader = headers?.["stripe-signature"] || headers?.["Stripe-Signature"];
       if (!signatureHeader) {
         return {
@@ -75,7 +81,7 @@ export class PaymentController extends BaseController {
       const secret = this.config.stripeWebhookSecret;
       const computed = crypto
         .createHmac("sha256", secret)
-        .update(`${t}.${JSON.stringify(payload)}`)
+        .update(`${t}.${rawBody ?? JSON.stringify(payload)}`)
         .digest("hex");
 
       const bufComputed = Buffer.from(computed, "hex");
@@ -211,5 +217,64 @@ export class PaymentController extends BaseController {
     }
 
     return null;
+  }
+
+  /**
+   * Razorpay delivers signed events for every endpoint subscription. Only the
+   * paid-link event settles a payment; everything else is acknowledged so
+   * Razorpay stops retrying without touching the ledger.
+   */
+  private async handleRazorpayWebhook(
+    payload: any,
+    headers?: Record<string, string>,
+    rawBody?: string
+  ): Promise<{ status: number; body: any }> {
+    const signatureHeader = headers?.["x-razorpay-signature"] || headers?.["X-Razorpay-Signature"];
+    if (!signatureHeader) {
+      return {
+        status: 401,
+        body: { error: "Unauthorized: Missing X-Razorpay-Signature header." }
+      };
+    }
+
+    if (!verifyRazorpaySignature(rawBody ?? JSON.stringify(payload), signatureHeader, this.config.razorpayWebhookSecret)) {
+      return {
+        status: 401,
+        body: { error: "Unauthorized: Webhook signature verification failed." }
+      };
+    }
+
+    const normalized = normalizeRazorpayEvent(payload);
+    if (!normalized.handled || !normalized.gatewayReference) {
+      this.logger.info("Razorpay webhook acknowledged without payment action", { event: payload?.event });
+      return {
+        status: 200,
+        body: { status: "ignored" }
+      };
+    }
+
+    try {
+      const payment = await this.acosBoundary.processPaymentWebhook(
+        normalized.gatewayReference,
+        normalized.success ?? false,
+        undefined,
+        undefined,
+        normalized.gatewayPaymentId
+      );
+      return {
+        status: 200,
+        body: payment
+      };
+    } catch (err: any) {
+      this.logger.error("Razorpay webhook failed to process", err);
+      const isNotFound = err.message.includes("No payment aggregate") || err.message.includes("not found");
+      return {
+        status: isNotFound ? 404 : 400,
+        body: {
+          error: isNotFound ? "Not Found" : "Webhook Processing Failed",
+          message: err.message
+        }
+      };
+    }
   }
 }

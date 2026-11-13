@@ -35,7 +35,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         amount: row.amount.toNumber(),
         currency: row.currency,
         status: row.status,
-        methodType: "SANDBOX",
+        methodType: row.method,
         methodDetails: "{}",
         transactionHash: null,
         gatewayReference: row.gatewayReference,
@@ -77,7 +77,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         amount: row.amount.toNumber(),
         currency: row.currency,
         status: row.status,
-        methodType: "SANDBOX",
+        methodType: row.method,
         methodDetails: "{}",
         transactionHash: null,
         gatewayReference: row.gatewayReference,
@@ -119,7 +119,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         amount: row.amount.toNumber(),
         currency: row.currency,
         status: row.status,
-        methodType: "SANDBOX",
+        methodType: row.method,
         methodDetails: "{}",
         transactionHash: null,
         gatewayReference: row.gatewayReference,
@@ -160,7 +160,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           amount: row.amount.toNumber(),
           currency: row.currency,
           status: row.status,
-          methodType: "SANDBOX",
+          methodType: row.method,
           methodDetails: "{}",
           transactionHash: null,
           gatewayReference: row.gatewayReference,
@@ -215,6 +215,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           amount: snapshot.amount,
           currency: snapshot.currency,
           status: snapshot.status,
+          method: snapshot.methodType,
           gatewayReference
         },
         update: {
@@ -224,6 +225,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           amount: snapshot.amount,
           currency: snapshot.currency,
           status: snapshot.status,
+          method: snapshot.methodType,
           gatewayReference
         }
       });

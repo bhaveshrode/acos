@@ -184,6 +184,11 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const gatewayRef = dbPayment.gatewayReference;
     expect(gatewayRef).toBeDefined();
 
+    // The collecting gateway is persisted and replayed, not defaulted on read
+    expect(dbPayment.method).toBe("STRIPE");
+    const replayedPayment = await frontend.getPayment(payment.id);
+    expect(replayedPayment.method).toBe("STRIPE");
+
     // Collecting the payment enqueues its own lifecycle transition
     const processingEvt = await prisma.outboxEvent.findFirst({
       where: { eventType: "PaymentProcessingStarted", aggregateId: dbPayment.id }

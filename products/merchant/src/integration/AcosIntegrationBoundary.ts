@@ -101,7 +101,8 @@ import {
   MockPaymentRepository,
   MockAccountsReceivableRepository
 } from "./MockRepositories.js";
-import { SandboxPaymentProvider, IPaymentProvider } from "./SandboxPaymentProvider.js";
+import { SandboxPaymentProvider } from "./SandboxPaymentProvider.js";
+import { IPaymentProvider, PaymentResponse } from "./PaymentProvider.js";
 
 export { OutboxEventBus } from "./OutboxEventBus.js";
 export { AcosPasswordHasher } from "./AcosPasswordHasher.js";
@@ -113,7 +114,10 @@ export {
   MockPaymentRepository,
   MockAccountsReceivableRepository
 } from "./MockRepositories.js";
-export { SandboxPaymentProvider, PaymentResponse, IPaymentProvider } from "./SandboxPaymentProvider.js";
+export { SandboxPaymentProvider } from "./SandboxPaymentProvider.js";
+export { PaymentResponse, PaymentCompletion, IPaymentProvider } from "./PaymentProvider.js";
+export { RazorpayPaymentProvider, RazorpayRestClient, RazorpayClient } from "./RazorpayPaymentProvider.js";
+export { verifyRazorpaySignature, normalizeRazorpayEvent } from "./RazorpayWebhook.js";
 
 export const OUTBOX_MAX_ATTEMPTS = 10;
 export const OUTBOX_BASE_RETRY_DELAY_MS = 1_000;
@@ -131,7 +135,7 @@ export interface ConnectOptions {
   allowInProcessBus?: boolean;
 }
 
-export interface BoundaryBusOptions {
+export interface BoundaryOptions {
   /**
    * Redis URL for the broker transport. Without it the boundary stays on the
    * in-process bus and outbox events never reach other replicas.
@@ -142,6 +146,10 @@ export interface BoundaryBusOptions {
    * one receives every event.
    */
   replicaId?: string;
+  /**
+   * Gateway used to collect payments. Defaults to the sandbox simulator.
+   */
+  paymentProvider?: IPaymentProvider;
 }
 
 /**
@@ -173,8 +181,8 @@ export class AcosIntegrationBoundary {
   private outboxRetryAt = 0;
   private readonly outboxClaimId = randomUUID();
 
-  // Sandbox provider context
-  public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
+  // Gateway used to collect payments (sandbox simulator unless injected)
+  public readonly paymentProvider: IPaymentProvider;
 
   // Mock-mode metadata registry: the persistent context reads BusinessProfile rows instead.
   public readonly businessMetadata = new Map<string, { businessType: string; country: string; contactInfo: string }>();
@@ -182,14 +190,15 @@ export class AcosIntegrationBoundary {
   constructor(
     private readonly logger: Logger,
     runtimeFactory?: any,
-    busOptions: BoundaryBusOptions = {}
+    options: BoundaryOptions = {}
   ) {
     this.runtime = new ACOSRuntime(runtimeFactory);
+    this.paymentProvider = options.paymentProvider ?? new SandboxPaymentProvider();
 
-    if (busOptions.brokerUrl) {
+    if (options.brokerUrl) {
       this.transport = new RedisStreamEventBus({
-        url: busOptions.brokerUrl,
-        replicaId: busOptions.replicaId,
+        url: options.brokerUrl,
+        replicaId: options.replicaId,
         logger
       });
       this.eventBus = new OutboxEventBus(this.transport, this);
@@ -1092,7 +1101,7 @@ export class AcosIntegrationBoundary {
       reference,
       amount: paymentAmount,
       currency,
-      method: "STRIPE",
+      method: this.paymentProvider.getMethodType(),
       invoiceId: invoice.id.value,
       allocatedAmount: paymentAmount
     });
@@ -1107,7 +1116,18 @@ export class AcosIntegrationBoundary {
     const paymentDto = result.value;
     const paymentId = paymentDto.id;
 
-    const providerResponse = await this.paymentProvider.initiatePayment(paymentId, paymentAmount, currency);
+    // Gateway I/O stays outside the unit of work so no DB transaction is held
+    // open across an external call.
+    let providerResponse: PaymentResponse;
+    try {
+      providerResponse = await this.paymentProvider.initiatePayment(paymentId, paymentAmount, currency);
+    } catch (error) {
+      // The payment row already exists here. Leaving it pending would make a
+      // failed collection look like money in flight, and the next retry would
+      // add another one, so it is terminal-failed before the error surfaces.
+      await this.recordGatewayInitiationFailure(paymentId, error);
+      throw error;
+    }
 
     const payment = await this.withinTransaction(async () => {
       const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
@@ -1139,7 +1159,50 @@ export class AcosIntegrationBoundary {
     this.logger.info("createPaymentRequest succeeded.", { paymentId, gatewayReference: providerResponse.gatewayReference });
 
     const mapper = new PaymentMapper();
-    return mapper.map(payment);
+    const dto = mapper.map(payment);
+    return providerResponse.paymentUrl ? { ...dto, paymentUrl: providerResponse.paymentUrl } : dto;
+  }
+
+  /**
+   * Terminal-fails a payment whose gateway link could not be opened. The
+   * original gateway error is what the caller needs, so a failure to record
+   * this is logged rather than thrown.
+   */
+  private async recordGatewayInitiationFailure(paymentId: string, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    this.logger.warn("createPaymentRequest: Gateway refused to open a payment; marking it failed.", {
+      paymentId,
+      error: message
+    });
+
+    try {
+      await this.withinTransaction(async () => {
+        const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+        if (paymentRes.isFailure) {
+          throw new Error(paymentRes.error.message);
+        }
+
+        const payment = paymentRes.value;
+        const failRes = failPayment(payment, new UniqueEntityID(), "GATEWAY_INITIATION_FAILED", message);
+        if (failRes.isFailure) {
+          throw new Error(failRes.error.message);
+        }
+
+        const saveRes = await this.paymentRepository.save(payment);
+        if (saveRes.isFailure) {
+          throw new Error(saveRes.error.message);
+        }
+
+        const events = payment.domainEvents;
+        payment.clearDomainEvents();
+        await this.eventBus.publishAll(events);
+      });
+    } catch (compensationError) {
+      this.logger.error(
+        "createPaymentRequest: Could not record the gateway failure; the payment remains pending.",
+        compensationError instanceof Error ? compensationError : new Error(String(compensationError))
+      );
+    }
   }
 
   /**
@@ -1150,7 +1213,8 @@ export class AcosIntegrationBoundary {
     gatewayReference: string,
     success: boolean,
     errorCode?: string,
-    errorMessage?: string
+    errorMessage?: string,
+    gatewayPaymentId?: string
   ): Promise<any> {
     this.logger.info("processPaymentWebhook: Processing webhook event...", { gatewayReference, success });
 
@@ -1161,7 +1225,19 @@ export class AcosIntegrationBoundary {
 
     // Gateway I/O stays outside the unit of work so no DB transaction is held
     // open across an external call.
-    const providerResponse = await this.paymentProvider.completePayment(gatewayReference, success);
+    const providerResponse = await this.paymentProvider.completePayment({
+      gatewayReference,
+      success,
+      gatewayPaymentId,
+      errorCode,
+      errorMessage
+    });
+    const confirmed = success && providerResponse.status === "SUCCEEDED";
+    if (success && !confirmed) {
+      throw new Error(
+        `Gateway has not captured this payment yet (status: ${providerResponse.status}). Retry the callback after capture.`
+      );
+    }
 
     const payment = await this.withinTransaction(async () => {
       // Callbacks outlive the process that initiated the payment, so the
@@ -1181,7 +1257,7 @@ export class AcosIntegrationBoundary {
 
       const attemptId = new UniqueEntityID();
 
-      if (success) {
+      if (confirmed) {
         const txHash = TransactionHash.create(providerResponse.transactionHash!).value;
         const count = ConfirmationCount.create(1).value;
 
