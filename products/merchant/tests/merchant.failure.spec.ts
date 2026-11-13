@@ -42,7 +42,7 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
     backend = new MerchantBackend(config, boundary, writer);
     frontend = new MerchantFrontend(backend, writer);
 
-    await boundary.connect("test");
+    await boundary.connect("test", undefined, { allowInMemory: true });
     await backend.start();
   });
 
@@ -81,7 +81,16 @@ describe("ACOS Merchant — Failure & Edge-Case Validation (Phase 10)", () => {
       expect(response.body.status).toBe("DISCONNECTED");
 
       // 3. Re-connect boundary for remaining tests
-      await boundary.connect("test");
+      await boundary.connect("test", undefined, { allowInMemory: true });
+    });
+
+    it("should refuse to start on in-memory repositories unless they are explicitly allowed", async () => {
+      const runtimeFactory = new RuntimeFactory();
+      runtimeFactory.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+      const guarded = new AcosIntegrationBoundary(new Logger("AcosBoundaryGuarded", writer), runtimeFactory);
+
+      await expect(guarded.connect("test")).rejects.toThrow(/without persistence/);
+      expect((await guarded.checkConnectivity()).connected).toBe(false);
     });
   });
 

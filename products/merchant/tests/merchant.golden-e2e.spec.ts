@@ -44,7 +44,7 @@ describe("ACOS Merchant — Golden End-to-End Commerce Flow (Phase 9)", () => {
     frontend = new MerchantFrontend(backend, writer);
 
     // Bootstrap
-    await boundary.connect("test");
+    await boundary.connect("test", undefined, { allowInMemory: true });
     await backend.start();
   });
 

@@ -117,6 +117,13 @@ export const OUTBOX_MAX_ATTEMPTS = 10;
 export const OUTBOX_BASE_RETRY_DELAY_MS = 1_000;
 export const OUTBOX_MAX_RETRY_DELAY_MS = 5 * 60_000;
 
+export interface ConnectOptions {
+  /**
+   * Accepts the in-memory repositories, which drop every record when the process exits.
+   */
+  allowInMemory?: boolean;
+}
+
 /**
  * Orchestrator acting as the gateway/boundary between Merchant and ACOS subsystems.
  */
@@ -305,8 +312,15 @@ export class AcosIntegrationBoundary {
 
   /**
    * Initializes and boots ACOS runtime subsystems and wires up CQRS handlers.
+   * Throws when no database URL is given and in-memory repositories were not explicitly allowed.
    */
-  public async connect(env: string, dbUrl?: string): Promise<boolean> {
+  public async connect(env: string, dbUrl?: string, options: ConnectOptions = {}): Promise<boolean> {
+    if (!dbUrl && !options.allowInMemory) {
+      throw new Error(
+        "Refusing to start without persistence: connect() requires a database URL. Pass allowInMemory to accept repositories that drop all state on exit."
+      );
+    }
+
     try {
       this.logger.info("Initializing ACOS Integration Boundary...", { env, dbUrl });
 
@@ -338,6 +352,10 @@ export class AcosIntegrationBoundary {
         this.invoiceRepository = new PrismaInvoiceRepository(prismaClient) as any;
         this.paymentRepository = new PrismaPaymentRepository(prismaClient) as any;
         this.accountsReceivableRepository = new PrismaAccountsReceivableRepository(prismaClient) as any;
+      } else {
+        this.logger.warn(
+          "Starting on in-memory repositories (allowInMemory): every record is lost when this process exits."
+        );
       }
 
       await this.runtime.initialize(env);
