@@ -103,10 +103,7 @@ jobs:
         run: |
           npm run test --workspace=acos-runtime
 
-      # Visibility only: this covers the whole backend/src tree, including the
-      # domain specs and sources the kernel entry points do not reach.
-      - name: Full backend typecheck (non-blocking)
-        continue-on-error: true
+      - name: Full backend typecheck
         working-directory: backend
         run: |
           npx tsc --noEmit -p tsconfig.json
