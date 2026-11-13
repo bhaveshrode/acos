@@ -39,6 +39,7 @@ import { InvoiceDueDateChanged } from "../events/InvoiceDueDateChanged.js";
 import { InvoicePartiallyPaid } from "../events/InvoicePartiallyPaid.js";
 import { InvoicePaid } from "../events/InvoicePaid.js";
 import { InvoiceOverpaid } from "../events/InvoiceOverpaid.js";
+import { InvoiceRefunded } from "../events/InvoiceRefunded.js";
 import { InvoiceClosed } from "../events/InvoiceClosed.js";
 
 export interface InvoiceProps {
@@ -332,6 +333,50 @@ export class Invoice extends AggregateRoot<InvoiceId> {
       this.addDomainEvent(new InvoicePartiallyPaid(this.id.value, amountPaid));
     }
 
+    return Result.ok();
+  }
+
+  /**
+   * Records money returned to the payer, moving the invoice back to the status
+   * its remaining net payment supports. `netPaid` is the cumulative confirmed
+   * payment left after this refund; the invoice itself does not track payments.
+   */
+  public recordRefund(amountRefunded: Money, netPaid: Money): Result<void> {
+    if (this.status === InvoiceStatus.DRAFT) {
+      return Result.fail(ResultError.conflict("Cannot record refunds against draft invoices."));
+    }
+    if (this.status === InvoiceStatus.VOID || this.status === InvoiceStatus.CANCELLED) {
+      return Result.fail(ResultError.conflict("Cannot record refunds against voided/cancelled invoices."));
+    }
+    if (amountRefunded.amount <= 0) {
+      return Result.fail(ResultError.conflict("Refund amount must be positive."));
+    }
+    if (amountRefunded.currency !== this.currency || netPaid.currency !== this.currency) {
+      return Result.fail(
+        ResultError.conflict(
+          `Currency mismatch: Refund currency ${amountRefunded.currency} does not match Invoice currency ${this.currency}.`
+        )
+      );
+    }
+    if (netPaid.amount < 0) {
+      return Result.fail(ResultError.conflict("Net paid amount cannot be negative."));
+    }
+
+    this.props.updatedAt = new Date();
+
+    if (netPaid.amount >= this.grandTotal.amount) {
+      if (netPaid.amount > this.grandTotal.amount) {
+        this.props.status = InvoiceStatus.OVERPAID;
+      } else {
+        this.props.status = InvoiceStatus.PAID;
+      }
+    } else if (netPaid.amount > 0) {
+      this.props.status = InvoiceStatus.PARTIALLY_PAID;
+    } else {
+      this.props.status = InvoiceStatus.ISSUED;
+    }
+
+    this.addDomainEvent(new InvoiceRefunded(this.id.value, amountRefunded));
     return Result.ok();
   }
 

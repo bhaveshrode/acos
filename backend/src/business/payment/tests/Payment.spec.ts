@@ -193,6 +193,32 @@ describe("Payment Bounded Context Unit Tests (Tasks 15.2 - 15.5)", () => {
       // In this case: refundId is APPROVED (active), refundId2 is REJECTED (inactive). So payment status remains REFUND_REQUESTED.
       expect(payment.status).toBe(PaymentStatus.REFUND_REQUESTED);
     });
+
+    it("should return to CONFIRMED after a partial refund completes and to REFUNDED after a full refund", () => {
+      const payment = Payment.create(
+        PaymentId.generate(),
+        orgId,
+        custId,
+        payRef,
+        payAmount,
+        payMethod,
+        invId,
+        allocAmount
+      ).value;
+
+      payment.confirm(new UniqueEntityID(), TransactionHash.create("0x" + "c".repeat(64)).value, ConfirmationCount.create(1).value);
+
+      const partialId = new UniqueEntityID();
+      expect(payment.requestRefund(partialId, Money.create(40, "USDC").value, "Partial refund").isSuccess).toBe(true);
+      expect(payment.completeRefund(partialId).isSuccess).toBe(true);
+      expect(payment.refundRequests.find((r) => r.id.equals(partialId))?.status).toBe(RefundStatus.COMPLETED);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
+
+      const restId = new UniqueEntityID();
+      expect(payment.requestRefund(restId, Money.create(60, "USDC").value, "Remaining refund").isSuccess).toBe(true);
+      expect(payment.completeRefund(restId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.REFUNDED);
+    });
   });
 
   describe("Policies and Domain Services", () => {

@@ -164,6 +164,34 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       expect(ar.getCreditBalance("USDC").amount).toBe(20);
     });
 
+    it("should re-open an invoice balance after a refund and refuse to refund beyond it", () => {
+      const ar = AccountsReceivable.create(accId, orgId, custId).value;
+      const invId = InvoiceId.generate();
+      const policy = new CreditAllocationPolicy();
+
+      ar.addInvoice(new UniqueEntityID(), invId, Money.create(100, "USDC").value, new Date(Date.now() + 86_400_000));
+      ar.applyPayment(new UniqueEntityID(), SettlementId.generate(), invId, Money.create(100, "USDC").value, policy);
+      expect(ar.entries[0].remainingBalance.amount).toBe(0);
+
+      const res = ar.applyRefund(invId, Money.create(40, "USDC").value);
+      expect(res.isSuccess).toBe(true);
+      expect(ar.entries[0].remainingBalance.amount).toBe(40);
+      expect(ar.getOutstandingBalance("USDC").amount).toBe(40);
+      expect(ar.status).toBe(ReceivableStatus.PARTIALLY_PAID);
+      expect(ar.domainEvents.map((e) => e.eventName)).toContain("RefundApplied");
+
+      // Only the 60 still collected can be returned
+      const overRefund = ar.applyRefund(invId, Money.create(70, "USDC").value);
+      expect(overRefund.isFailure).toBe(true);
+      expect(ar.entries[0].remainingBalance.amount).toBe(40);
+
+      const rest = ar.applyRefund(invId, Money.create(60, "USDC").value);
+      expect(rest.isSuccess).toBe(true);
+      expect(ar.entries[0].remainingBalance.amount).toBe(100);
+      expect(ar.entries[0].isPaid).toBe(false);
+      expect(ar.getOutstandingBalance("USDC").amount).toBe(100);
+    });
+
     it("should allow applying unapplied credit to outstanding invoices", () => {
       const ar = AccountsReceivable.create(accId, orgId, custId).value;
       const invId = InvoiceId.generate();

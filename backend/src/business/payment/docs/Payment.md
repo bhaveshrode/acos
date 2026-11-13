@@ -55,6 +55,7 @@ The `Payment` aggregate root enforces the following business rules:
 6. **Cancellation Lock**: Cancelled or failed payments cannot transition to confirmed.
 7. **Allocation Limits**: The sum of all allocated amounts cannot exceed the total payment amount.
 8. **Refund Limits**: Refund amount cannot exceed the confirmed payment amount.
+9. **Refund Settlement**: A completed partial refund returns the payment to `CONFIRMED`; once completed refunds cover the payment it becomes `REFUNDED`.
 
 ---
 

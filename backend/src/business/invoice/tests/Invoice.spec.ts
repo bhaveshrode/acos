@@ -237,6 +237,46 @@ describe("Invoice Bounded Context Unit Tests (Tasks 14.2 - 14.5)", () => {
       invoice.recordPayment(Money.create(100, "USD").value);
       expect(invoice.status).toBe(InvoiceStatus.PAID);
     });
+
+    it("should re-open invoice status from confirmed refunds", () => {
+      const invoice = Invoice.create(
+        InvoiceId.generate(),
+        orgId,
+        custId,
+        invNumber,
+        "USD",
+        payTerms,
+        issueDate,
+        dueDate
+      ).value;
+
+      invoice.addLineItem(
+        new UniqueEntityID(),
+        "Services",
+        Quantity.create(1).value,
+        UnitPrice.create(Money.create(100, "USD").value).value,
+        TaxRate.create(0).value
+      );
+      invoice.issue();
+      invoice.recordPayment(Money.create(100, "USD").value);
+      expect(invoice.status).toBe(InvoiceStatus.PAID);
+
+      // Partial refund leaves the rest collected
+      const partial = invoice.recordRefund(Money.create(30, "USD").value, Money.create(70, "USD").value);
+      expect(partial.isSuccess).toBe(true);
+      expect(invoice.status).toBe(InvoiceStatus.PARTIALLY_PAID);
+      expect(invoice.domainEvents.map((e) => e.eventName)).toContain("InvoiceRefunded");
+
+      // Full refund returns the invoice to its outstanding state
+      const full = invoice.recordRefund(Money.create(70, "USD").value, Money.create(0, "USD").value);
+      expect(full.isSuccess).toBe(true);
+      expect(invoice.status).toBe(InvoiceStatus.ISSUED);
+
+      const wrongCurrency = invoice.recordRefund(Money.create(10, "EUR").value, Money.create(0, "USD").value);
+      expect(wrongCurrency.isFailure).toBe(true);
+      const zero = invoice.recordRefund(Money.create(0, "USD").value, Money.create(0, "USD").value);
+      expect(zero.isFailure).toBe(true);
+    });
   });
 
   describe("Domain Services and Policies", () => {
