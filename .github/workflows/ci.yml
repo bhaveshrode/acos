@@ -58,7 +58,7 @@ jobs:
 
       - name: Run Database Migrations
         run: |
-          npm run prisma:push --workspace=acos-backend
+          npm run prisma:migrate --workspace=acos-backend
 
       - name: Build Merchant
         run: |
