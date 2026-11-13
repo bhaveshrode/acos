@@ -41,8 +41,22 @@ model Organization {
   slug      String   @unique
   name      String
   currency  String
+  ownerId   String   @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  profile   BusinessProfile?
+
+  @@index([ownerId])
+}
+
+model BusinessProfile {
+  organizationId String   @id
+  businessType   String
+  country        String
+  contactInfo    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 model Customer {

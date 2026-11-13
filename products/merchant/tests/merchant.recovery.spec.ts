@@ -111,8 +111,16 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     expect(tokenBeforeRestart).toBeDefined();
 
     // Onboard business
-    const biz = await frontend.onboardBusiness("Recovery Shop", `rec-shop-${Date.now()}`, "USD");
+    const biz = await frontend.onboardBusiness(
+      "Recovery Shop",
+      `rec-shop-${Date.now()}`,
+      "USD",
+      "E-Commerce",
+      "India",
+      "ops@recovery.test"
+    );
     expect(biz.name).toBe("Recovery Shop");
+    expect(biz.businessType).toBe("E-Commerce");
 
     // Create customer
     const customer = await frontend.createCustomer({
@@ -259,6 +267,19 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     // 9. Verify Active Session Survival
     const me = await frontend.queryMe();
     expect(me.email).toBe(email);
+
+    // 9a. The business profile is stored with the organization, so a boundary
+    // with no process memory must still resolve the owner's business and metadata.
+    const restoredBusiness = await frontend.queryBusiness();
+    expect(restoredBusiness.id).toBe(biz.id);
+    expect(restoredBusiness.businessType).toBe("E-Commerce");
+    expect(restoredBusiness.country).toBe("India");
+    expect(restoredBusiness.contactInfo).toBe("ops@recovery.test");
+
+    const profileRow = await boundary.prismaClient.businessProfile.findUnique({
+      where: { organizationId: biz.id }
+    });
+    expect(profileRow?.businessType).toBe("E-Commerce");
 
     // 9b. Verify the invoice sent before the restart still reads as SENT
     const survivedSent = await frontend.getInvoice(deliveredInvoice.id);

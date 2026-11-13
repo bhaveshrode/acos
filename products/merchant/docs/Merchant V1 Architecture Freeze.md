@@ -78,7 +78,7 @@ Sign Up ──► Login ──► Onboard Business ──► Create Customer ─
 ## 6. Persistence Architecture
 The persistence layer supports two execution contexts:
 1. **Mock Context (Development Fallback)**: In-memory repository registries mapping data to local collections for rapid testing.
-2. **Persistent Context (Production Mode)**: Relational tables mapped to PostgreSQL using Prisma Client. Repositories utilize transaction boundaries (`$transaction`) to enforce financial ledger consistency. The accounts receivable ledger (`ReceivableAccount` with its entry, credit, application and collection-action rows) lives here too, so balances survive a restart.
+2. **Persistent Context (Production Mode)**: Relational tables mapped to PostgreSQL using Prisma Client. Repositories utilize transaction boundaries (`$transaction`) to enforce financial ledger consistency. The accounts receivable ledger (`ReceivableAccount` with its entry, credit, application and collection-action rows) lives here too, so balances survive a restart. The business profile (`BusinessProfile`, with the owning user on the `Organization` row) is stored here as well, so onboarding metadata and tenant ownership resolve through a fresh process instead of an in-memory registry.
 
 ---
 

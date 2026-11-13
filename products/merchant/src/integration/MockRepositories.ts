@@ -94,6 +94,15 @@ export class MockOrganizationRepository implements IOrganizationRepository {
     return Result.fail(ResultError.notFound(`Organization with slug ${slug.value} not found.`));
   }
 
+  public async findByOwner(ownerId: UserId): Promise<Result<Organization>> {
+    for (const item of this.items.values()) {
+      if (item.ownerId.equals(ownerId)) {
+        return Result.ok(item);
+      }
+    }
+    return Result.fail(ResultError.notFound(`Organization owned by user ${ownerId.value} not found.`));
+  }
+
   public async exists(slug: OrganizationSlug): Promise<Result<boolean>> {
     for (const item of this.items.values()) {
       if (item.slug.equals(slug)) {

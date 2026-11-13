@@ -94,9 +94,23 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const me = await frontend.queryMe();
     expect(me.email).toBe(email);
 
-    // 3. Business Onboarding (checks Organization & BusinessMetadata table context)
-    const biz = await frontend.onboardBusiness("Postgres Shop", `pg-shop-${Date.now()}`, "USD");
+    // 3. Business Onboarding (checks Organization & BusinessProfile tables)
+    const biz = await frontend.onboardBusiness(
+      "Postgres Shop",
+      `pg-shop-${Date.now()}`,
+      "USD",
+      "Retail",
+      "USA",
+      "billing@pg-shop.test"
+    );
     expect(biz.name).toBe("Postgres Shop");
+
+    const orgRow = await prisma.organization.findUnique({ where: { id: biz.id } });
+    expect(orgRow?.ownerId).toBe(user.id);
+
+    const profileRow = await prisma.businessProfile.findUnique({ where: { organizationId: biz.id } });
+    expect(profileRow?.businessType).toBe("Retail");
+    expect(profileRow?.contactInfo).toBe("billing@pg-shop.test");
 
     // 4. Create Customer (checks Customer table)
     const customer = await frontend.createCustomer({
