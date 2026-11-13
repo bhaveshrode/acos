@@ -270,7 +270,10 @@ export class AcosIntegrationBoundary {
       this.drainRequested = true;
       return;
     }
+    await this.queueOutboxDrain();
+  }
 
+  private async queueOutboxDrain(): Promise<void> {
     const pass = this.drainChain.then(() =>
       this.drainContext.run(true, () => this.drainOutbox())
     );
@@ -402,7 +405,8 @@ export class AcosIntegrationBoundary {
   /**
    * A failed delivery must not wait for unrelated traffic to be retried, so the
    * earliest scheduled attempt arms a one-shot drain. Keeping only the earliest
-   * timer avoids a timer per row; the callback re-reads eligibility from the DB.
+   * timer avoids a timer per row; the callback re-reads eligibility from the DB
+   * and re-arms for rows whose backoff outlasts the timer it just served.
    */
   private scheduleOutboxRetry(nextAttemptAt: Date): void {
     const at = nextAttemptAt.getTime();
@@ -413,12 +417,36 @@ export class AcosIntegrationBoundary {
     this.outboxRetryTimer = setTimeout(() => {
       this.outboxRetryTimer = null;
       this.outboxRetryAt = 0;
-      // The timer is armed inside a drain pass, so its callback would inherit that
-      // pass's context and be mistaken for a re-entrant publish. Leave the context
-      // first, or the retry is dropped once the arming pass has finished.
-      void this.drainContext.exit(() => this.processOutboxAsynchronously());
+      // The timer is armed inside a drain pass and inherits that pass's context,
+      // so it must queue a pass directly instead of going through the re-entrancy
+      // guard, which would mistake it for a handler publishing again.
+      void (async () => {
+        await this.queueOutboxDrain();
+        await this.armNextOutboxRetry();
+      })().catch(() => {});
     }, Math.max(0, at - Date.now()));
     this.outboxRetryTimer.unref?.();
+  }
+
+  /**
+   * A single timer only serves the earliest backoff it was armed for. Rows whose
+   * nextAttemptAt lies further out would otherwise wait for unrelated traffic, so
+   * every timer firing re-reads the earliest pending retry and arms the next one.
+   */
+  private async armNextOutboxRetry(): Promise<void> {
+    if (this.outboxRetryTimer || !this.prismaClient) return;
+    const next = await this.prismaClient.outboxEvent.findFirst({
+      where: {
+        processed: false,
+        deadLetteredAt: null,
+        nextAttemptAt: { not: null }
+      },
+      orderBy: { nextAttemptAt: "asc" },
+      select: { nextAttemptAt: true }
+    });
+    if (next?.nextAttemptAt) {
+      this.scheduleOutboxRetry(next.nextAttemptAt);
+    }
   }
 
   /**
