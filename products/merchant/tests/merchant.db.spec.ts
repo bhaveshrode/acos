@@ -181,6 +181,16 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const finalInvoice = await frontend.getInvoice(invoice.id);
     expect(finalInvoice.status).toBe("PAID");
 
+    // The receivable ledger is written in the reconciliation transaction
+    const arRow = await prisma.receivableAccount.findFirst({
+      where: { organizationId: finalInvoice.organizationId, customerId: finalInvoice.customerId }
+    });
+    expect(arRow).toBeDefined();
+    const arEntry = await prisma.receivableEntry.findFirst({
+      where: { accountId: arRow.id, invoiceId: invoice.id }
+    });
+    expect(arEntry.remainingAmount.toNumber()).toBe(0);
+
     // Verify outbox event record was persisted and processed
     const outboxEvt = await prisma.outboxEvent.findFirst({
       where: { eventType: "InvoicePaid" }
@@ -331,6 +341,13 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     const paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
     expect(paymentRow.status).toBe("PROCESSING");
+
+    // The receivable ledger shares the transaction, so the rolled-back
+    // confirmation must not leave an account or entry behind.
+    const arRow = await prisma.receivableAccount.findFirst({
+      where: { customerId: invoice.customerId }
+    });
+    expect(arRow).toBeNull();
   });
 
   it("publishes a declined payment through the outbox", async () => {

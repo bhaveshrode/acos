@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Logger, LogEntry } from "acos-backend";
+import { Logger, LogEntry, OrganizationId, CustomerId } from "acos-backend";
 import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
@@ -198,6 +198,35 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     const callbackReference = preRestartPayment.gatewayReference;
     expect(callbackReference).toBeDefined();
 
+    // 7d. Confirm an overpayment before the restart so the receivable ledger
+    // holds both a settled entry and a customer credit across the boundary.
+    const overpaidInvoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-REC-AR-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [
+        { description: "Overpaid Services", quantity: 1, unitPrice: 100, taxRate: 0 }
+      ]
+    });
+    await frontend.issueInvoice(overpaidInvoice.id);
+    await frontend.sendInvoice(overpaidInvoice.id);
+    await frontend.collectPayment(overpaidInvoice.id, 130);
+
+    const overpaidPayment = await boundary.prismaClient.payment.findFirst({
+      where: { invoiceId: overpaidInvoice.id }
+    });
+    await frontend.simulateWebhook(overpaidPayment.gatewayReference, true);
+
+    const arBeforeRestart = await boundary.accountsReceivableRepository.findByCustomer(
+      OrganizationId.from(overpaidInvoice.organizationId),
+      CustomerId.from(customer.id)
+    );
+    expect(arBeforeRestart.isSuccess).toBe(true);
+    expect(arBeforeRestart.value.getCreditBalance("USD").amount).toBe(30);
+
     // Seed an outbox record through the production writer. Counting the whole
     // table only passed when another spec file happened to run first and leave
     // rows behind, so the suite passed or failed depending on file scheduling.
@@ -255,6 +284,20 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
       return record?.processed === true;
     });
     expect(confirmedEventProcessed).toBe(true);
+
+    // 9d. The receivable ledger lives in the database now, so a fresh boundary
+    // must still see the settled entry and the customer credit from 7d.
+    const arAfterRestart = await boundary.accountsReceivableRepository.findByCustomer(
+      OrganizationId.from(overpaidInvoice.organizationId),
+      CustomerId.from(customer.id)
+    );
+    expect(arAfterRestart.isSuccess).toBe(true);
+    const settledEntry = arAfterRestart.value.entries.find(
+      (entry) => entry.invoiceId.value === overpaidInvoice.id
+    );
+    expect(settledEntry).toBeDefined();
+    expect(settledEntry!.remainingBalance.amount).toBe(0);
+    expect(arAfterRestart.value.getCreditBalance("USD").amount).toBe(30);
 
     // 10. Verify Idempotency Record Survival
     // Replaying exact signup request should return the cached response (201) instead of 409
