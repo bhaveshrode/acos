@@ -31,6 +31,10 @@ import {
   Payment,
   PaymentId,
   PaymentReference,
+  submitPayment,
+  startPaymentProcessing,
+  confirmPayment,
+  failPayment,
   TransactionHash,
   GatewayReference,
   ConfirmationCount,
@@ -840,10 +844,10 @@ export class AcosIntegrationBoundary {
     const attemptId1 = new UniqueEntityID();
     const attemptId2 = new UniqueEntityID();
 
-    payment.submit(attemptId1);
+    submitPayment(payment, attemptId1);
     
     const gatewayRef = GatewayReference.create(providerResponse.gatewayReference).value;
-    payment.startProcessing(attemptId2, gatewayRef);
+    startPaymentProcessing(payment, attemptId2, gatewayRef);
 
     const saveRes = await this.paymentRepository.save(payment);
     if (saveRes.isFailure) {
@@ -896,7 +900,7 @@ export class AcosIntegrationBoundary {
       const txHash = TransactionHash.create(providerResponse.transactionHash!).value;
       const count = ConfirmationCount.create(1).value;
 
-      const confirmRes = payment.confirm(attemptId, txHash, count);
+      const confirmRes = confirmPayment(payment, attemptId, txHash, count);
       if (confirmRes.isFailure) {
         throw new Error(confirmRes.error.message);
       }
@@ -990,7 +994,8 @@ export class AcosIntegrationBoundary {
       this.logger.info("processPaymentWebhook: Reconciliation completed successfully.");
 
     } else {
-      const failRes = payment.fail(
+      const failRes = failPayment(
+        payment,
         attemptId,
         errorCode || providerResponse.errorCode || "DECLINED",
         errorMessage || providerResponse.errorMessage || "Declined by gateway"
