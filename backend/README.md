@@ -18,8 +18,7 @@ The backend workspace contains the core transactional capabilities, domain aggre
 -   **[src/application](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/application)**: Application-specific command/query definitions and CQRS orchestration pipelines:
     -   `foundation/pipeline/Mediator.ts`: Standard CQRS mediator dispatcher.
     -   `handlers/`: Command/query execution logic (e.g., `RegisterUserCommandHandler`, `CreateInvoiceCommandHandler`).
--   **`src/adapters`**: Outbound adapters the domain does not own — `security/` (`PasswordHasher`, `JwtTokenProvider`), plus persistence extractors, hydrators and serializers. Exposed only through the `acos-backend/adapters` entry point.
--   **`src/infrastructure`**: Messaging, persistence and transaction helpers consumed by those adapters.
+-   **`src/adapters`**: Everything the domain does not own — `persistence/` (deserializers, extractors, hydrators, serializers, snapshots), `messaging/` (event bus, outbox, publishers, subscribers), `repositories/base`, `transactions/scopes`, and `security/` (`PasswordHasher`, `JwtTokenProvider`). Exposed only through the `acos-backend/adapters` entry point.
 -   **`src/kernel`**: The public syscall surface (`acos-backend`, `/adapters`, `/application`). Nothing outside these entry points is API.
 
 ---
