@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ACOSRuntime } from "acos-runtime";
 import {
   Logger,
@@ -175,7 +176,9 @@ export class AcosIntegrationBoundary {
   public readonly eventBus: IEventBus;
   private readonly transport: RedisStreamEventBus | null = null;
   public prismaClient: any = null;
-  private isProcessingOutbox = false;
+  private readonly drainContext = new AsyncLocalStorage<boolean>();
+  private drainChain: Promise<void> = Promise.resolve();
+  private drainRequested = false;
   private outboxDrainPending = false;
   private outboxRetryTimer: NodeJS.Timeout | null = null;
   private outboxRetryAt = 0;
@@ -256,11 +259,36 @@ export class AcosIntegrationBoundary {
 
   /**
    * Background runner that processes unprocessed OutboxEvent records sequentially.
+   * Concurrent callers queue behind the running pass instead of skipping it, so a
+   * caller that has just committed events never returns before its own rows are
+   * published. A call made from inside a pass (a handler publishing again) only
+   * marks the pass dirty, letting it claim the new rows on its next sweep.
    */
   public async processOutboxAsynchronously(): Promise<void> {
-    if (this.isProcessingOutbox || TransactionScope.current || !this.prismaClient) return;
-    this.isProcessingOutbox = true;
+    if (TransactionScope.current || !this.prismaClient) return;
+    if (this.drainContext.getStore()) {
+      this.drainRequested = true;
+      return;
+    }
+    await this.queueOutboxDrain();
+  }
 
+  private async queueOutboxDrain(): Promise<void> {
+    const pass = this.drainChain.then(() =>
+      this.drainContext.run(true, () => this.drainOutbox())
+    );
+    this.drainChain = pass.catch(() => {});
+    await pass;
+  }
+
+  private async drainOutbox(): Promise<void> {
+    do {
+      this.drainRequested = false;
+      await this.drainOutboxBatch();
+    } while (this.drainRequested);
+  }
+
+  private async drainOutboxBatch(): Promise<void> {
     try {
       const records = await this.claimOutboxBatch();
 
@@ -322,8 +350,6 @@ export class AcosIntegrationBoundary {
       }
     } catch (err: any) {
       this.logger.error("Failed to process transaction outbox events", err);
-    } finally {
-      this.isProcessingOutbox = false;
     }
   }
 
@@ -379,7 +405,8 @@ export class AcosIntegrationBoundary {
   /**
    * A failed delivery must not wait for unrelated traffic to be retried, so the
    * earliest scheduled attempt arms a one-shot drain. Keeping only the earliest
-   * timer avoids a timer per row; the callback re-reads eligibility from the DB.
+   * timer avoids a timer per row; the callback re-reads eligibility from the DB
+   * and re-arms for rows whose backoff outlasts the timer it just served.
    */
   private scheduleOutboxRetry(nextAttemptAt: Date): void {
     const at = nextAttemptAt.getTime();
@@ -390,9 +417,36 @@ export class AcosIntegrationBoundary {
     this.outboxRetryTimer = setTimeout(() => {
       this.outboxRetryTimer = null;
       this.outboxRetryAt = 0;
-      void this.processOutboxAsynchronously();
+      // The timer is armed inside a drain pass and inherits that pass's context,
+      // so it must queue a pass directly instead of going through the re-entrancy
+      // guard, which would mistake it for a handler publishing again.
+      void (async () => {
+        await this.queueOutboxDrain();
+        await this.armNextOutboxRetry();
+      })().catch(() => {});
     }, Math.max(0, at - Date.now()));
     this.outboxRetryTimer.unref?.();
+  }
+
+  /**
+   * A single timer only serves the earliest backoff it was armed for. Rows whose
+   * nextAttemptAt lies further out would otherwise wait for unrelated traffic, so
+   * every timer firing re-reads the earliest pending retry and arms the next one.
+   */
+  private async armNextOutboxRetry(): Promise<void> {
+    if (this.outboxRetryTimer || !this.prismaClient) return;
+    const next = await this.prismaClient.outboxEvent.findFirst({
+      where: {
+        processed: false,
+        deadLetteredAt: null,
+        nextAttemptAt: { not: null }
+      },
+      orderBy: { nextAttemptAt: "asc" },
+      select: { nextAttemptAt: true }
+    });
+    if (next?.nextAttemptAt) {
+      this.scheduleOutboxRetry(next.nextAttemptAt);
+    }
   }
 
   /**

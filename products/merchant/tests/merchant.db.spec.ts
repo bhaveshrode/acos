@@ -542,4 +542,126 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
       await prisma.outboxEvent.deleteMany({ where: { eventType } });
     }
   });
+
+  it("queues a second drain behind the running pass instead of skipping its rows", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const prisma = (boundary as any).prismaClient;
+    const eventType = `acos.outbox.drain_wait_probe.${Date.now()}`;
+    const delivered: string[] = [];
+
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+
+    const handler = {
+      handle: async (event: any) => {
+        delivered.push(event.getAggregateId());
+        if (delivered.length === 1) {
+          markEntered();
+          await firstGate;
+        }
+      }
+    };
+    boundary.eventBus.subscribe(eventType, handler as any);
+
+    try {
+      const firstRow = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "first",
+          payload: JSON.stringify({ metadata: { aggregateId: "first" }, eventName: eventType }),
+          processed: false
+        }
+      });
+
+      // Start a pass and hold it mid-delivery, so the row below commits while it runs.
+      const firstDrain = boundary.processOutboxAsynchronously();
+      await entered;
+
+      const secondRow = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "second",
+          payload: JSON.stringify({ metadata: { aggregateId: "second" }, eventName: eventType }),
+          processed: false
+        }
+      });
+      const secondDrain = boundary.processOutboxAsynchronously();
+
+      releaseFirst();
+      await Promise.all([firstDrain, secondDrain]);
+
+      const [firstAfter, secondAfter] = await Promise.all([
+        prisma.outboxEvent.findUnique({ where: { id: firstRow.id } }),
+        prisma.outboxEvent.findUnique({ where: { id: secondRow.id } })
+      ]);
+      expect(firstAfter.processed).toBe(true);
+      expect(
+        secondAfter.processed,
+        "a drain requested while another pass runs must publish the row committed during that pass"
+      ).toBe(true);
+      expect(delivered).toEqual(["first", "second"]);
+    } finally {
+      releaseFirst();
+      boundary.eventBus.unsubscribe(eventType, handler as any);
+      await prisma.outboxEvent.deleteMany({ where: { eventType } });
+    }
+  });
+
+  it("retries a failed delivery from the scheduled timer without another drain call", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const prisma = (boundary as any).prismaClient;
+    const eventType = `acos.outbox.retry_timer_probe.${Date.now()}`;
+    const handler = {
+      handle: async () => {
+        throw new Error("timer probe failure");
+      }
+    };
+    boundary.eventBus.subscribe(eventType, handler as any);
+
+    try {
+      const row = await prisma.outboxEvent.create({
+        data: {
+          eventType,
+          aggregateId: "timer-probe",
+          payload: JSON.stringify({ metadata: { aggregateId: "timer-probe" }, eventName: eventType }),
+          processed: false
+        }
+      });
+
+      // The first pass arms the retry timer from inside its own drain context.
+      await boundary.processOutboxAsynchronously();
+      const firstAttempt = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+      expect(firstAttempt.retryCount).toBe(1);
+
+      // Only the timer can retry from here; no further drain is requested.
+      const deadline = Date.now() + 4_000;
+      let afterTimer = firstAttempt;
+      while (Date.now() < deadline) {
+        afterTimer = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+        if (afterTimer.retryCount >= 2) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(
+        afterTimer.retryCount,
+        "the scheduled retry timer must run its own drain instead of inheriting the pass that armed it"
+      ).toBeGreaterThanOrEqual(2);
+    } finally {
+      boundary.eventBus.unsubscribe(eventType, handler as any);
+      await prisma.outboxEvent.deleteMany({ where: { eventType } });
+    }
+  });
 });
