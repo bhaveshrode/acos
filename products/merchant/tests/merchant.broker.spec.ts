@@ -196,6 +196,56 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     }
   });
 
+  it("tracks retry budgets independently per replica", async () => {
+    if (!isBrokerAvailable) return;
+
+    const streamName = `${namespace}.budgets`;
+    const deadLetterStreamName = `${streamName}.dead`;
+    const receivedB: string[] = [];
+    const receivedC: string[] = [];
+    let failuresB = 0;
+    let failuresC = 0;
+    const busA = createBus(streamName, "budget-publisher");
+    const busB = createBus(streamName, "budget-b", { maxAttempts: 2, deadLetterStreamName });
+    const busC = createBus(streamName, "budget-c", { maxAttempts: 2, deadLetterStreamName });
+
+    try {
+      await busA.start();
+      await busB.start();
+      await busC.start();
+
+      busB.subscribe(
+        "BrokerBudgetProbe",
+        handlerFor(receivedB, async () => {
+          if (failuresB === 0) {
+            failuresB++;
+            throw new Error("transient failure in replica b");
+          }
+        })
+      );
+      busC.subscribe(
+        "BrokerBudgetProbe",
+        handlerFor(receivedC, async () => {
+          if (failuresC === 0) {
+            failuresC++;
+            throw new Error("transient failure in replica c");
+          }
+        })
+      );
+
+      await busA.publish(makeEvent("BrokerBudgetProbe"));
+
+      await waitFor(() => receivedB.length === 1 && receivedC.length === 1);
+      expect(failuresB).toBe(1);
+      expect(failuresC).toBe(1);
+      expect(await probe!.xlen(deadLetterStreamName)).toBe(0);
+    } finally {
+      await busA.close();
+      await busB.close();
+      await busC.close();
+    }
+  });
+
   it("dead-letters a message whose handler keeps failing", async () => {
     if (!isBrokerAvailable) return;
 

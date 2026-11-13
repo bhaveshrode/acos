@@ -76,7 +76,7 @@ export class RedisStreamEventBus implements IEventBus {
     this.claimIdleMs = options.claimIdleMs ?? BROKER_DEFAULT_CLAIM_IDLE_MS;
     this.maxAttempts = options.maxAttempts ?? BROKER_DEFAULT_MAX_ATTEMPTS;
     this.blockMs = options.blockMs ?? BROKER_DEFAULT_BLOCK_MS;
-    this.attemptsKey = `${this.streamName}:attempts`;
+    this.attemptsKey = `${this.streamName}:attempts:${this.groupName}`;
   }
 
   /**
@@ -310,6 +310,7 @@ export class RedisStreamEventBus implements IEventBus {
       const event = EventSerializer.deserialize(fields.eventType, fields.payload);
       await this.local.publish(event);
       await this.markSeen(eventId);
+      await this.consumer!.hdel(this.attemptsKey, eventId);
       await this.ack(messageId);
     } catch (err: any) {
       await this.recordFailure(messageId, eventId, fields, err);
@@ -324,6 +325,7 @@ export class RedisStreamEventBus implements IEventBus {
   ): Promise<void> {
     const consumer = this.consumer!;
     const attempts = await consumer.hincrby(this.attemptsKey, eventId, 1);
+    await consumer.expire(this.attemptsKey, BROKER_DEDUPE_TTL_SECONDS);
 
     if (attempts < this.maxAttempts) {
       this.logger.warn("Broker handler failed; message stays pending for redelivery", {
