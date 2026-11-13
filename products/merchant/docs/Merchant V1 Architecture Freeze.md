@@ -85,7 +85,7 @@ The persistence layer supports two execution contexts:
 ## 7. Event & Outbox Architecture
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
 1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
-2. The boundary wraps invoice creation/issuing (and payment submission) in a PostgreSQL transaction via `TransactionScope`. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
+2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount` and stores `lastError` so the row is retried, not lost.
 
 ---
 
@@ -118,6 +118,7 @@ The release criteria baseline is strictly frozen as follows:
 
 ## 11. Known Development Fallbacks
 * **Mock Repositories**: Default to in-memory mocks when database URLs are omitted.
+* **In-Memory Accounts Receivable**: The AR ledger (`PrismaAccountsReceivableRepository`) keeps accounts in process memory even in persistent mode, so AR balances are not covered by the database transactions above and do not survive a restart.
 * **Sandbox Payment Provider**: Simulates provider integrations rather than querying live Stripe endpoints.
 * **Local Event Bus**: Utilizes in-memory dispatching rather than external message queues (e.g. RabbitMQ/Kafka).
 

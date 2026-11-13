@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Logger, LogEntry } from "acos-backend";
+import { Logger, LogEntry, Result, ResultError } from "acos-backend";
 import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
@@ -247,5 +247,76 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(row.totalAmount.toString()).toBe("0.3");
     expect(row.lineItems[0].price.toNumber()).toBe(0.1);
     expect(row.totalAmount.toNumber()).toBe(0.3);
+  });
+
+  it("rolls back confirmation and reconciliation when the final write fails", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `webhook_atomic_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Atomic Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Atomic Shop", `atomic-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Ada Atomic",
+      customerNumber: `CUST-ATOMIC-${Date.now()}`,
+      primaryContact: {
+        name: "Ada Atomic",
+        email: "ada@example.com",
+        phone: "+1-555-0120"
+      },
+      billingAddress: {
+        line1: "9 Commit Way",
+        city: "Metropolis",
+        state: "NY",
+        country: "USA",
+        postalCode: "10001"
+      }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-ATOMIC-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Atomic Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    const gatewayRef = dbPayment.gatewayReference;
+
+    // The payment row is written last, after the invoice has already been
+    // reconciled. Failing that write used to leave the invoice committed as
+    // PAID with its event published and the payment still processing.
+    const originalSave = boundary.paymentRepository.save.bind(boundary.paymentRepository);
+    boundary.paymentRepository.save = async () =>
+      Result.fail(ResultError.unexpected("injected payment write failure"));
+
+    try {
+      await expect(boundary.processPaymentWebhook(gatewayRef, true)).rejects.toThrow(
+        /injected payment write failure/
+      );
+    } finally {
+      boundary.paymentRepository.save = originalSave;
+    }
+
+    const invoiceRow = await prisma.invoice.findUnique({ where: { id: invoice.id } });
+    expect(invoiceRow.status).toBe("ISSUED");
+
+    const paidEvent = await prisma.outboxEvent.findFirst({
+      where: { eventType: "InvoicePaid", aggregateId: invoice.id }
+    });
+    expect(paidEvent).toBeNull();
+
+    const paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+    expect(paymentRow.status).toBe("PROCESSING");
   });
 });
