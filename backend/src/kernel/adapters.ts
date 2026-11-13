@@ -21,5 +21,5 @@ export { OrganizationSerializer } from "../infrastructure/persistence/serializer
 export { PaymentSerializer } from "../infrastructure/persistence/serializers/PaymentSerializer.js";
 export { UserSerializer } from "../infrastructure/persistence/serializers/UserSerializer.js";
 
-export { JwtTokenProvider } from "../presentation/authentication/JwtTokenProvider.js";
-export { PasswordHasher } from "../presentation/authentication/PasswordHasher.js";
+export { JwtTokenProvider } from "../adapters/security/JwtTokenProvider.js";
+export { PasswordHasher } from "../adapters/security/PasswordHasher.js";
