@@ -342,11 +342,15 @@ export class Invoice extends AggregateRoot<InvoiceId> {
    * payment left after this refund; the invoice itself does not track payments.
    */
   public recordRefund(amountRefunded: Money, netPaid: Money): Result<void> {
-    if (this.status === InvoiceStatus.DRAFT) {
-      return Result.fail(ResultError.conflict("Cannot record refunds against draft invoices."));
-    }
-    if (this.status === InvoiceStatus.VOID || this.status === InvoiceStatus.CANCELLED) {
-      return Result.fail(ResultError.conflict("Cannot record refunds against voided/cancelled invoices."));
+    const refundableStates: InvoiceStatus[] = [
+      InvoiceStatus.PARTIALLY_PAID,
+      InvoiceStatus.PAID,
+      InvoiceStatus.OVERPAID
+    ];
+    if (!refundableStates.includes(this.status)) {
+      return Result.fail(
+        ResultError.conflict(`Refunds can only be recorded on invoices with a recorded payment. Current status is ${this.status}.`)
+      );
     }
     if (amountRefunded.amount <= 0) {
       return Result.fail(ResultError.conflict("Refund amount must be positive."));

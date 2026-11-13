@@ -261,6 +261,11 @@ describe("Invoice Bounded Context Unit Tests (Tasks 14.2 - 14.5)", () => {
       invoice.recordPayment(Money.create(100, "USD").value);
       expect(invoice.status).toBe(InvoiceStatus.PAID);
 
+      const wrongCurrency = invoice.recordRefund(Money.create(10, "EUR").value, Money.create(90, "USD").value);
+      expect(wrongCurrency.isFailure).toBe(true);
+      const zero = invoice.recordRefund(Money.create(0, "USD").value, Money.create(100, "USD").value);
+      expect(zero.isFailure).toBe(true);
+
       // Partial refund leaves the rest collected
       const partial = invoice.recordRefund(Money.create(30, "USD").value, Money.create(70, "USD").value);
       expect(partial.isSuccess).toBe(true);
@@ -272,10 +277,32 @@ describe("Invoice Bounded Context Unit Tests (Tasks 14.2 - 14.5)", () => {
       expect(full.isSuccess).toBe(true);
       expect(invoice.status).toBe(InvoiceStatus.ISSUED);
 
-      const wrongCurrency = invoice.recordRefund(Money.create(10, "EUR").value, Money.create(0, "USD").value);
-      expect(wrongCurrency.isFailure).toBe(true);
-      const zero = invoice.recordRefund(Money.create(0, "USD").value, Money.create(0, "USD").value);
-      expect(zero.isFailure).toBe(true);
+      // An invoice with no recorded payment cannot book a refund, and a fully
+      // refunded invoice is back in that state.
+      const refundOfNothing = invoice.recordRefund(Money.create(10, "USD").value, Money.create(0, "USD").value);
+      expect(refundOfNothing.isFailure).toBe(true);
+      expect(refundOfNothing.error.message).toContain("recorded payment");
+
+      const neverPaid = Invoice.create(
+        InvoiceId.generate(),
+        orgId,
+        custId,
+        invNumber,
+        "USD",
+        payTerms,
+        issueDate,
+        dueDate
+      ).value;
+      neverPaid.addLineItem(
+        new UniqueEntityID(),
+        "Services",
+        Quantity.create(1).value,
+        UnitPrice.create(Money.create(100, "USD").value).value,
+        TaxRate.create(0).value
+      );
+      neverPaid.issue();
+      const uncollected = neverPaid.recordRefund(Money.create(10, "USD").value, Money.create(0, "USD").value);
+      expect(uncollected.isFailure).toBe(true);
     });
   });
 
