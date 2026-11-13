@@ -85,7 +85,7 @@ The persistence layer supports two execution contexts:
 ## 7. Event & Outbox Architecture
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
 1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
-2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices and the receivable ledger, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A publish failure increments `retryCount`, stores `lastError`, and schedules the next attempt after an exponential backoff (1s doubling to a 5-minute cap), with the boundary arming a one-shot drain at the earliest due time so retries do not depend on unrelated traffic. After 10 failed attempts the row is dead-lettered (`deadLetteredAt`) and excluded from further drains instead of retrying forever.
+2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices and the receivable ledger, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A drain first claims its batch: a guarded `updateMany` stamps `lockedBy` and `lockedUntil` on rows whose lease has expired or was never taken, so two processes sharing the database split the batch instead of publishing the same event twice, and a process that dies mid-publish frees its rows when the lease runs out. A publish failure increments `retryCount`, stores `lastError`, and schedules the next attempt after an exponential backoff (1s doubling to a 5-minute cap), with the boundary arming a one-shot drain at the earliest due time so retries do not depend on unrelated traffic. After 10 failed attempts the row is dead-lettered (`deadLetteredAt`) and excluded from further drains instead of retrying forever.
 3. The payment lifecycle is enqueued the same way: `PaymentSubmitted` and `PaymentProcessingStarted` when a request is collected, `PaymentAllocated` and `PaymentConfirmed` when the webhook confirms, and `PaymentFailed` when it declines — each inside the transaction that writes the payment row.
 
 ---
@@ -113,9 +113,9 @@ The release criteria baseline is strictly frozen as follows:
 | **Integration Tests** | 61 | Local Express server (Loopback port 9001) |
 | **Golden E2E Flow** | 1 | Complete signup-to-reconciliation path (Port 9002) |
 | **Failure Tests** | 10 | Infrastructure and network degradation tests (Port 9003) |
-| **Database Tests** | 5 | PostgreSQL required (port 9005); skipped when unreachable |
+| **Database Tests** | 6 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
-| **Total** | **78** | **All tests must pass cleanly (`78/78 PASS`)** |
+| **Total** | **79** | **All tests must pass cleanly (`79/79 PASS`)** |
 
 ---
 

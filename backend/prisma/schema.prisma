@@ -131,6 +131,8 @@ model OutboxEvent {
   deadLetteredAt DateTime?
   createdAt      DateTime  @default(now())
   processedAt    DateTime?
+  lockedBy       String?
+  lockedUntil    DateTime?
 
   @@index([processed, nextAttemptAt])
 }

@@ -1199,6 +1199,17 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
               rec.processedAt = args.data.processedAt;
             }
             return rec;
+          },
+          updateMany: async (args: any) => {
+            const ids: string[] = args?.where?.id?.in ?? [];
+            let count = 0;
+            for (const rec of outboxRecords) {
+              if (ids.includes(rec.id) && !rec.processed) {
+                Object.assign(rec, args.data ?? {});
+                count++;
+              }
+            }
+            return { count };
           }
         }
       };
