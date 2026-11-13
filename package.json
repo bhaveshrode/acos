@@ -4,8 +4,8 @@
   "private": true,
   "workspaces": [
     "backend",
-    "frontend",
     "runtime",
+    "products/admin-console",
     "products/merchant"
   ]
 }

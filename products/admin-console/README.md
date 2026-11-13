@@ -1,6 +1,6 @@
-# ACOS Admin Frontend
+# ACOS Admin Console
 
-The frontend workspace hosts the client-side Admin Control Panel code. It governs layout rendering, real-time message notifications, user session states, themes, analytics consent tracking, and route-protection guards.
+The admin console product (`acos-admin-console`, under `products/admin-console`) hosts the client-side Admin Control Panel code. It governs layout rendering, real-time message notifications, user session states, themes, analytics consent tracking, and route-protection guards.
 
 ---
 

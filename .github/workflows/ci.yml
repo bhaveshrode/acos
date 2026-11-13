@@ -103,6 +103,10 @@ jobs:
         run: |
           npm run test --workspace=acos-runtime
 
+      - name: Run Admin Console Spec Suites
+        run: |
+          npm run test --workspace=acos-admin-console
+
       - name: Full backend typecheck
         working-directory: backend
         run: |
