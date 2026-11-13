@@ -41,11 +41,8 @@ import {
   IDomainEvent,
   IEventHandler
 } from "acos-backend";
-import {
-  PasswordHasher,
-  JwtTokenProvider,
-  MessagingFactory
-} from "acos-backend/adapters";
+import { JwtTokenProvider } from "../adapters/security/JwtTokenProvider.js";
+import { MessagingFactory } from "../adapters/messaging/factories/MessagingFactory.js";
 import {
   RegisterUserCommand,
   RegisterUserCommandHandler,

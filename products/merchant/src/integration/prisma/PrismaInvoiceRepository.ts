@@ -9,10 +9,8 @@ import {
   OrganizationId as OrgId,
   CustomerId
 } from "acos-backend";
-import {
-  InvoiceExtractor,
-  InvoiceHydrator
-} from "acos-backend/adapters";
+import { InvoiceExtractor } from "../../adapters/persistence/extractors/InvoiceExtractor.js";
+import { InvoiceHydrator } from "../../adapters/persistence/hydrators/InvoiceHydrator.js";
 
 export class PrismaInvoiceRepository implements IInvoiceRepository {
   constructor(private prisma: PrismaClient) {}

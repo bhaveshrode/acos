@@ -7,10 +7,8 @@ import {
   OrganizationId,
   OrganizationSlug
 } from "acos-backend";
-import {
-  OrganizationSerializer,
-  OrganizationHydrator
-} from "acos-backend/adapters";
+import { OrganizationSerializer } from "../../adapters/persistence/serializers/OrganizationSerializer.js";
+import { OrganizationHydrator } from "../../adapters/persistence/hydrators/OrganizationHydrator.js";
 
 export class PrismaOrganizationRepository implements IOrganizationRepository {
   public static readonly ownerMap = new Map<string, string>(); // userId -> orgId

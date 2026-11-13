@@ -10,10 +10,8 @@ import {
   OrganizationId as OrgId,
   InvoiceId as InvId
 } from "acos-backend";
-import {
-  PaymentSerializer,
-  PaymentHydrator
-} from "acos-backend/adapters";
+import { PaymentSerializer } from "../../adapters/persistence/serializers/PaymentSerializer.js";
+import { PaymentHydrator } from "../../adapters/persistence/hydrators/PaymentHydrator.js";
 
 export class PrismaPaymentRepository implements IPaymentRepository {
   constructor(private prisma: PrismaClient) {}
