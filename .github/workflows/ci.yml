@@ -60,11 +60,10 @@ jobs:
         run: |
           npm run prisma:push --workspace=acos-backend
 
-      - name: Compile Backend & Dependencies
+      - name: Build Merchant
         run: |
-          # Compile PaymentSerializer specifically to ensure its compiled output is up to date
-          npx tsc backend/src/infrastructure/persistence/serializers/PaymentSerializer.ts --outDir backend/dist/infrastructure/persistence/serializers --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --esModuleInterop
-          # Build merchant workspace
+          # The kernel build now compiles the adapters and application entry points,
+          # so the hand-compiled PaymentSerializer step is no longer needed.
           npm run build --workspace=acos-merchant
 
       - name: Run ACOS Merchant Spec Suites
@@ -104,9 +103,9 @@ jobs:
         run: |
           npm run test --workspace=acos-runtime
 
-      # Visibility only: application/infrastructure/presentation are stale against
-      # the domain and do not typecheck. Tracked separately; must not block the kernel.
-      - name: Legacy layers typecheck (non-blocking)
+      # Visibility only: this covers the whole backend/src tree, including the
+      # domain specs and sources the kernel entry points do not reach.
+      - name: Full backend typecheck (non-blocking)
         continue-on-error: true
         working-directory: backend
         run: |
