@@ -1,4 +1,4 @@
-import { IEventBus } from "../../../../../backend/src/foundation/events/EventBus.js";
+import type { IEventBus } from "acos-backend";
 import { InvoicePaidHandler } from "../handlers/InvoicePaidHandler.js";
 import { InvoicePartiallyPaidHandler } from "../handlers/InvoicePartiallyPaidHandler.js";
 import { InvoiceOverpaidHandler } from "../handlers/InvoiceOverpaidHandler.js";

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { Logger, LogWriter } from "../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../backend/src/foundation/logging/LogEntry.js";
-import { Mediator } from "../../../backend/src/application/foundation/pipeline/Mediator.js";
+import { Logger, LogEntry } from "acos-backend";
+import type { LogWriter } from "acos-backend";
+import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
 import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
@@ -137,7 +137,7 @@ describe("ACOS Merchant — Golden End-to-End Commerce Flow (Phase 9)", () => {
     expect(payment.amount).toBe(500);
     expect(payment.status).toBe("PROCESSING");
     const queryRes = await boundary.paymentRepository.findById(
-      await import("../../../backend/src/business/payment/value-objects/PaymentId.js").then(m => m.PaymentId.from(payment.id))
+      await import("acos-backend").then(m => m.PaymentId.from(payment.id))
     );
     const gatewayReference = queryRes.value.gatewayReference!.value;
     expect(gatewayReference).toBeDefined();

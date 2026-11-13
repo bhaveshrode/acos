@@ -1,6 +1,5 @@
-import { Logger } from "../../../backend/src/foundation/logging/Logger.js";
-import { LogEntry } from "../../../backend/src/foundation/logging/LogEntry.js";
-import { Mediator } from "../../../backend/src/application/foundation/pipeline/Mediator.js";
+import { Logger, LogEntry } from "acos-backend";
+import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "./configuration/MerchantConfig.js";
 import { AcosIntegrationBoundary } from "./integration/AcosIntegrationBoundary.js";

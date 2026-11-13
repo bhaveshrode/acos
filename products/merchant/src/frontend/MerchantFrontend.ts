@@ -1,4 +1,5 @@
-import { Logger, LogWriter } from "../../../../backend/src/foundation/logging/Logger.js";
+import { Logger } from "acos-backend";
+import type { LogWriter } from "acos-backend";
 import { MerchantBackend } from "../backend/MerchantBackend.js";
 import { IClientContext } from "./services/BaseClient.js";
 import { AuthClient } from "./services/AuthClient.js";
