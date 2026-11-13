@@ -93,7 +93,17 @@ jobs:
       - name: Run Database Migrations
         run: npm run prisma:migrate --workspace=acos-backend
 
+      # Two phases so the pay link and webhook URL land in the step summary
+      # within a minute, long before the wait step starts polling. The state
+      # file is shared through /tmp, which is why both phases live in one job.
+      - name: Create the payment link and publish the URLs
+        env:
+          RAZORPAY_E2E_PHASE: create
+        run: npm run test --workspace=acos-merchant -- merchant.razorpay.inbound
+
       - name: Pay the printed link and wait for the webhook
+        env:
+          RAZORPAY_E2E_PHASE: wait
         run: npm run test --workspace=acos-merchant -- merchant.razorpay.inbound
 
       - name: Show tunnel log

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Logger } from "acos-backend";
 import type { LogEntry, LogWriter } from "acos-backend";
@@ -18,6 +21,43 @@ const DB_URL = process.env.MERCHANT_DATABASE_URL || "postgresql://postgres:postg
 const PORT = 8090;
 const TUNNEL_METRICS_URL = process.env.RAZORPAY_E2E_TUNNEL_METRICS || "http://127.0.0.1:20241/quicktunnel";
 const PAYMENT_WAIT_MS = 15 * 60 * 1000;
+const STATE_PATH = process.env.RAZORPAY_E2E_STATE || path.join(os.tmpdir(), "razorpay-e2e-state.json");
+
+/**
+ * "create" and "wait" run as separate test processes so the URLs are published
+ * before the job starts waiting. Unset runs both in one process, which is the
+ * one-shot form for local runs.
+ */
+const PHASE = process.env.RAZORPAY_E2E_PHASE ?? "combined";
+
+interface E2EState {
+  email: string;
+  invoiceId: string;
+  paymentId: string;
+  paymentUrl: string;
+  webhookUrl: string;
+  createdAt: string;
+}
+
+function writeState(state: E2EState): void {
+  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
+}
+
+function readState(): E2EState {
+  if (!fs.existsSync(STATE_PATH)) {
+    throw new Error(
+      `No E2E state at ${STATE_PATH}. Run the create phase first (RAZORPAY_E2E_PHASE=create) or unset RAZORPAY_E2E_PHASE for a combined run.`
+    );
+  }
+  return JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) as E2EState;
+}
+
+function publishStepSummary(markdown: string): void {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryPath) {
+    fs.appendFileSync(summaryPath, markdown);
+  }
+}
 
 /**
  * Opt-in inbound round trip: a human pays a real test-mode Payment Link and
@@ -96,8 +136,8 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
     }
   }, 30_000);
 
-  it(
-    "confirms and reconciles a payment Razorpay collected",
+  it.skipIf(PHASE === "wait")(
+    "creates the payment link and publishes the webhook URL",
     async () => {
       const stamp = Date.now();
       const email = `rzp-e2e-${stamp}@example.com`;
@@ -137,26 +177,72 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
 
       const payment = await frontend.collectPayment(invoice.id);
       expect(payment.paymentUrl, "Razorpay must return a hosted checkout URL").toMatch(/^https:\/\//);
-      console.log(`PAY THIS LINK: ${payment.paymentUrl}`);
 
       const tunnelHost = await resolveTunnelHostname();
+      let webhookUrl = "";
       if (tunnelHost) {
-        console.log(`WEBHOOK URL: https://${tunnelHost}/payments/webhook`);
+        webhookUrl = `https://${tunnelHost}/payments/webhook`;
       } else if (REQUIRE_TUNNEL) {
         throw new Error(
           `No tunnel answered at ${TUNNEL_METRICS_URL}; Razorpay cannot deliver the webhook. Start cloudflared with --metrics 127.0.0.1:20241 and rerun.`
         );
       } else {
-        console.warn("No tunnel detected. The webhook cannot reach this process, so this run will time out.");
+        console.warn("No tunnel detected. The webhook cannot reach this process, so the wait phase will time out.");
+        webhookUrl = "(no tunnel detected)";
       }
+
+      writeState({
+        email,
+        invoiceId: invoice.id,
+        paymentId: payment.id,
+        paymentUrl: payment.paymentUrl,
+        webhookUrl,
+        createdAt: new Date().toISOString()
+      });
+
+      console.log(`WEBHOOK URL: ${webhookUrl}`);
+      console.log(`PAY THIS LINK: ${payment.paymentUrl}`);
+      console.log(`Invoice ${invoice.id} waits for payment_link.paid.`);
+
+      publishStepSummary(
+        [
+          "### Razorpay inbound E2E — waiting for a payment",
+          "",
+          "1. In the Razorpay dashboard (test mode), point the `payment_link.paid` webhook at:",
+          "",
+          "```",
+          webhookUrl,
+          "```",
+          "",
+          "2. Pay this ₹1 link with a test card:",
+          "",
+          payment.paymentUrl,
+          "",
+          "3. The wait phase polls the invoice until Razorpay's callback confirms it.",
+          "",
+          `State: ${STATE_PATH} (invoice \`${invoice.id}\`, payment \`${payment.id}\`)`,
+          ""
+        ].join("\n")
+      );
+    },
+    5 * 60 * 1000
+  );
+
+  it.skipIf(PHASE === "create")(
+    "confirms and reconciles a payment Razorpay collected",
+    async () => {
+      const state = readState();
+      // The wait phase usually runs in a fresh process, so it needs its own session.
+      await frontend.login(state.email, "password123");
+      console.log(`Waiting on invoice ${state.invoiceId} and payment ${state.paymentId}.`);
 
       const prisma = (boundary as any).prismaClient;
       const deadline = Date.now() + PAYMENT_WAIT_MS;
-      let invoiceStatus = invoice.status;
+      let invoiceStatus = "SENT";
       let lastNotice = Date.now();
 
       while (Date.now() < deadline) {
-        const current = await frontend.getInvoice(invoice.id);
+        const current = await frontend.getInvoice(state.invoiceId);
         if (current.status !== invoiceStatus || Date.now() - lastNotice > 30_000) {
           console.log(`Waiting for the gateway callback; invoice is ${current.status}.`);
           invoiceStatus = current.status;
@@ -169,13 +255,13 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
       }
 
       if (invoiceStatus !== "PAID") {
-        const row = await prisma.payment.findUnique({ where: { id: payment.id } });
-        const invoiceRow = await prisma.invoice.findUnique({ where: { id: invoice.id } });
+        const row = await prisma.payment.findUnique({ where: { id: state.paymentId } });
+        const invoiceRow = await prisma.invoice.findUnique({ where: { id: state.invoiceId } });
         const paidEvent = await prisma.outboxEvent.findFirst({
-          where: { eventType: "InvoicePaid", aggregateId: invoice.id }
+          where: { eventType: "InvoicePaid", aggregateId: state.invoiceId }
         });
         console.error(`Diagnostics after ${PAYMENT_WAIT_MS / 60_000} minutes:`);
-        console.error(`- payment ${payment.id}: ${row?.status ?? "missing"} (gateway reference ${row?.gatewayReference ?? "none"})`);
+        console.error(`- payment ${state.paymentId}: ${row?.status ?? "missing"} (gateway reference ${row?.gatewayReference ?? "none"})`);
         console.error(
           `- invoice row: ${invoiceRow?.status ?? "missing"}; InvoicePaid event: ${paidEvent ? `processed=${paidEvent.processed}` : "absent"}`
         );
@@ -185,14 +271,14 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
         throw new Error("Invoice did not reach PAID. Read the diagnostics above: no webhook (delivery or URL), a rejected signature, or a rejected payload.");
       }
 
-      const finalInvoice = await frontend.getInvoice(invoice.id);
+      const finalInvoice = await frontend.getInvoice(state.invoiceId);
       expect(finalInvoice.status).toBe("PAID");
 
-      const confirmedPayment = await frontend.getPayment(payment.id);
+      const confirmedPayment = await frontend.getPayment(state.paymentId);
       expect(confirmedPayment.status).toBe("CONFIRMED");
       expect(confirmedPayment.method).toBe("RAZORPAY");
 
-      const paymentRow = await prisma.payment.findUnique({ where: { id: payment.id } });
+      const paymentRow = await prisma.payment.findUnique({ where: { id: state.paymentId } });
       expect(paymentRow?.gatewayReference, "payments resolve from the persisted link id").toMatch(/^plink_/);
       expect(paymentRow?.method).toBe("RAZORPAY");
 
@@ -203,12 +289,12 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
         throw new Error("Reconciliation did not open a receivable account.");
       }
       const arEntry = await prisma.receivableEntry.findFirst({
-        where: { accountId: arAccount.id, invoiceId: invoice.id }
+        where: { accountId: arAccount.id, invoiceId: state.invoiceId }
       });
       expect(arEntry?.remainingAmount.toNumber()).toBe(0);
 
       const paidEvent = await prisma.outboxEvent.findFirst({
-        where: { eventType: "InvoicePaid", aggregateId: invoice.id }
+        where: { eventType: "InvoicePaid", aggregateId: state.invoiceId }
       });
       expect(paidEvent?.processed).toBe(true);
 
