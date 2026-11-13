@@ -100,6 +100,10 @@ jobs:
         run: |
           npm run test:kernel --workspace=acos-backend
 
+      - name: Run Runtime Spec Suite
+        run: |
+          npm run test --workspace=acos-runtime
+
       # Visibility only: application/infrastructure/presentation are stale against
       # the domain and do not typecheck. Tracked separately; must not block the kernel.
       - name: Legacy layers typecheck (non-blocking)

@@ -14,13 +14,7 @@
       "acos-backend/application": ["../../backend/src/kernel/application.ts"],
       "acos-backend/adapters": ["../../backend/src/kernel/adapters.ts"],
       "acos-runtime": ["../../runtime/index.ts"],
-      "acos-runtime/*": ["../../runtime/*"],
-      "acos-platform": ["../../platform/dist/index.js"],
-      "acos-platform/*": ["../../platform/dist/*"],
-      "acos-compliance": ["../../compliance/dist/index.js"],
-      "acos-compliance/*": ["../../compliance/dist/*"],
-      "acos-infrastructure": ["../../infrastructure/dist/index.js"],
-      "acos-infrastructure/*": ["../../infrastructure/dist/*"]
+      "acos-runtime/*": ["../../runtime/*"]
     }
   },
   "include": [

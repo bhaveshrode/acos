@@ -28,12 +28,7 @@ ACOS/
 ├── package.json            # Workspace setup and global configs
 ├── backend/                # Core OS Kernel, DDD primitives, and CQRS handlers
 ├── frontend/               # Core Admin Panel UI, routing, theme, and ws state
-├── compliance/             # PCI, Tax, Audit, and Governance layers
-├── platform/               #Tenancy boundaries, reliability check scenarios
-├── developer/              # OpenApi schema, SDKs, CLIs, Postman configuration
-├── intelligence/           # Context-aware planning, memory, and reasoning agents
 ├── runtime/                # Subsystem bootstrapper, composition, and health metrics
-├── infrastructure/         # DB interfaces (Prisma), container pipelines, and message logs
 └── products/
     └── merchant/           # Decoupled Merchant portal Express.js app
 ```

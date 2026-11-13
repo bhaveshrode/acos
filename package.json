@@ -5,14 +5,7 @@
   "workspaces": [
     "backend",
     "frontend",
-    "developer",
-    "intelligence",
-    "platform",
-    "compliance",
     "runtime",
-    "infrastructure",
-    "product",
-    "production",
     "products/merchant"
   ]
 }

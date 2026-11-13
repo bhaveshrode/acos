@@ -12,11 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "acos-backend": "*",
-    "acos-developer": "*",
-    "acos-intelligence": "*",
-    "acos-platform": "*",
-    "acos-compliance": "*"
+    "acos-backend": "*"
   },
   "devDependencies": {
     "@types/node": "^20.11.10",
