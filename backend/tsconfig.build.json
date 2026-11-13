@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "include": [],
-  "files": ["src/kernel/index.ts"]
+  "files": [
+    "src/kernel/index.ts",
+    "src/kernel/application.ts",
+    "src/kernel/adapters.ts"
+  ]
 }
