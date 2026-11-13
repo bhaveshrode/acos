@@ -114,20 +114,20 @@ The release criteria baseline is strictly frozen as follows:
 | **Integration Tests** | 61 | Local Express server (Loopback port 9001) |
 | **Golden E2E Flow** | 1 | Complete signup-to-reconciliation path (Port 9002) |
 | **Failure Tests** | 11 | Infrastructure and network degradation tests (Port 9003) |
-| **Database Tests** | 6 | PostgreSQL required (port 9005); skipped when unreachable |
+| **Database Tests** | 7 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
 | **Broker Tests** | 7 | Redis required (CI service); skipped when unreachable |
 | **Payment Provider Tests** | 17 | Razorpay adapter, signature verification, webhook dispatch and failed initiation against a stubbed gateway; no network |
 | **Razorpay Live Smoke** | 3 | Skipped in the gate. Manual dispatch (`RAZORPAY_SMOKE=1`, test-mode keys) creates and abandons a ₹1 Payment Link against the real API |
 | **Razorpay Inbound E2E** | 1 | Skipped in the gate. Manual dispatch waits for a human to pay a ₹1 test-mode link through a public tunnel, then asserts webhook → CONFIRMED → PAID. Verified once on 2026-11-13 |
-| **Total** | **104** | **All tests must pass cleanly (`104/104 PASS`)** |
+| **Total** | **105** | **All tests must pass cleanly (`105/105 PASS`)** |
 
 ---
 
 ## 11. Known Development Fallbacks
 * **Mock Repositories**: Opt-in only. A boundary started without a database URL aborts unless the caller passes `allowInMemory`, so no deployment runs on repositories that lose state at exit. The mock-mode suites pass the flag explicitly.
 * **Sandbox Payment Provider**: The default (`PAYMENT_PROVIDER=sandbox`) simulates the gateway in-process rather than calling a live API. It holds no state, so a simulated callback can be delivered to any process that can reach the database. With `PAYMENT_PROVIDER=razorpay` the boundary instead creates Razorpay Payment Links, returns the hosted URL as `paymentUrl`, and confirms from `payment_link.paid` only after re-reading the payment from Razorpay. Collection is INR-only until international payments are enabled on the account. Each payment records the collecting gateway as its method (`RAZORPAY` or, for the simulator, `STRIPE`), and that column is persisted so payment history reports the gateway that actually took the money. If the gateway refuses to open a link, the payment that was already persisted is terminal-failed (`GATEWAY_INITIATION_FAILED`) before the error is returned, so a failed collection does not linger as pending or accumulate on retry. Link creation is verified against the real API by a manual-dispatch smoke job: it proves test-mode credentials, the request schema, and paise conversion by opening and abandoning a ₹1 Payment Link. The paid → captured → `payment_link.paid` path cannot be automated, because Razorpay delivers that event only after a human pays the hosted page and the endpoint must be publicly reachable; a separate manual-dispatch E2E job covers it by exposing the running backend through a cloudflared tunnel and asserting CONFIRMED, PAID and a settled receivable once the operator pays a ₹1 test-mode link. That job has run once against test mode (2026-11-13): the operator paid a ₹1 link, the delivered `payment_link.paid` passed signature verification, the payment reached `CONFIRMED`, the invoice `PAID`, and the receivable settled to zero. The paid round trip is therefore verified against the real service, but stays an operator-driven check outside the CI gate — dispatch it again after any change to the webhook, signature, or confirmation path.
-* **Local Event Bus**: Opt-in only. A boundary started without `MERCHANT_BROKER_URL` aborts unless the caller passes `allowInProcessBus`, so no deployment silently keeps outbox events inside the process that wrote them. With the flag, durability still comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them, but no other replica ever sees them.
+* **Local Event Bus**: Opt-in only. A boundary started without `MERCHANT_BROKER_URL` aborts unless the caller passes `allowInProcessBus`, so no deployment silently keeps outbox events inside the process that wrote them. With the flag, durability still comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them, but no other replica ever sees them. Passes are serialized per process: a caller that has just committed events queues behind any running pass and waits for its own rows to publish, instead of returning while another drain holds the runner.
 
 ---
 

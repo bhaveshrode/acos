@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ACOSRuntime } from "acos-runtime";
 import {
   Logger,
@@ -175,7 +176,9 @@ export class AcosIntegrationBoundary {
   public readonly eventBus: IEventBus;
   private readonly transport: RedisStreamEventBus | null = null;
   public prismaClient: any = null;
-  private isProcessingOutbox = false;
+  private readonly drainContext = new AsyncLocalStorage<boolean>();
+  private drainChain: Promise<void> = Promise.resolve();
+  private drainRequested = false;
   private outboxDrainPending = false;
   private outboxRetryTimer: NodeJS.Timeout | null = null;
   private outboxRetryAt = 0;
@@ -256,11 +259,33 @@ export class AcosIntegrationBoundary {
 
   /**
    * Background runner that processes unprocessed OutboxEvent records sequentially.
+   * Concurrent callers queue behind the running pass instead of skipping it, so a
+   * caller that has just committed events never returns before its own rows are
+   * published. A call made from inside a pass (a handler publishing again) only
+   * marks the pass dirty, letting it claim the new rows on its next sweep.
    */
   public async processOutboxAsynchronously(): Promise<void> {
-    if (this.isProcessingOutbox || TransactionScope.current || !this.prismaClient) return;
-    this.isProcessingOutbox = true;
+    if (TransactionScope.current || !this.prismaClient) return;
+    if (this.drainContext.getStore()) {
+      this.drainRequested = true;
+      return;
+    }
 
+    const pass = this.drainChain.then(() =>
+      this.drainContext.run(true, () => this.drainOutbox())
+    );
+    this.drainChain = pass.catch(() => {});
+    await pass;
+  }
+
+  private async drainOutbox(): Promise<void> {
+    do {
+      this.drainRequested = false;
+      await this.drainOutboxBatch();
+    } while (this.drainRequested);
+  }
+
+  private async drainOutboxBatch(): Promise<void> {
     try {
       const records = await this.claimOutboxBatch();
 
@@ -322,8 +347,6 @@ export class AcosIntegrationBoundary {
       }
     } catch (err: any) {
       this.logger.error("Failed to process transaction outbox events", err);
-    } finally {
-      this.isProcessingOutbox = false;
     }
   }
 

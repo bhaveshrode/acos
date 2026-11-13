@@ -1240,7 +1240,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       // Wait for background outbox processor to finish processing
       for (let i = 0; i < 100; i++) {
-        if (!(boundary as any).isProcessingOutbox && outboxRecords[0]?.processed) {
+        if (outboxRecords[0]?.processed) {
           break;
         }
         await new Promise(resolve => setTimeout(resolve, 20));
