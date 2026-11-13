@@ -251,7 +251,10 @@ export class RedisStreamEventBus implements IEventBus {
         await this.reclaimStaleEntries();
       } catch (err) {
         if (!this.closed) {
-          this.logger.error("Broker consumer read failed; retrying", err);
+          this.logger.error(
+            "Broker consumer read failed; retrying",
+            err instanceof Error ? err : new Error(String(err))
+          );
           await delay(250);
         }
       }
