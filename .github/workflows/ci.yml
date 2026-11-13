@@ -59,10 +59,9 @@ jobs:
       - name: Generate baseline migration (temporary)
         working-directory: backend
         run: |
-          npx prisma migrate diff --help
           mkdir -p prisma/migrations/20261113120000_init
           printf 'provider = "postgresql"\n' > prisma/migrations/migration_lock.toml
-          npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/migrations/20261113120000_init/migration.sql
+          npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > prisma/migrations/20261113120000_init/migration.sql
           echo "===MIGRATION-SQL-START==="
           cat prisma/migrations/20261113120000_init/migration.sql
           echo "===MIGRATION-SQL-END==="
