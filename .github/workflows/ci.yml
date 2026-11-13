@@ -60,6 +60,18 @@ jobs:
         run: |
           npm run prisma:migrate --workspace=acos-backend
 
+      - name: Verify migrations match schema.prisma
+        working-directory: backend
+        run: |
+          # The test database is built only from prisma/migrations, so a diff here
+          # means schema.prisma was edited without a matching migration.
+          if npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code; then
+            echo "Migrations match schema.prisma."
+          else
+            echo "::error::prisma/migrations drifted from schema.prisma — commit a migration for the change."
+            exit 1
+          fi
+
       - name: Build Merchant
         run: |
           # The kernel build now compiles the adapters and application entry points,
