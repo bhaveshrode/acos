@@ -27,9 +27,9 @@ ACOS/
 ├── README.md               # Root Monorepo documentation
 ├── package.json            # Workspace setup and global configs
 ├── backend/                # Core OS Kernel, DDD primitives, and CQRS handlers
-├── frontend/               # Core Admin Panel UI, routing, theme, and ws state
 ├── runtime/                # Subsystem bootstrapper, composition, and health metrics
 └── products/
+    ├── admin-console/      # Core Admin Panel UI, routing, theme, and ws state
     └── merchant/           # Decoupled Merchant portal Express.js app
 ```
 
