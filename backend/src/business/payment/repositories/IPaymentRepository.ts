@@ -1,6 +1,7 @@
 import { Payment } from "../aggregates/Payment.js";
 import { PaymentId } from "../value-objects/PaymentId.js";
 import { PaymentReference } from "../value-objects/PaymentReference.js";
+import { GatewayReference } from "../value-objects/GatewayReference.js";
 import { TransactionHash } from "../value-objects/TransactionHash.js";
 import { OrganizationId } from "../../organization/value-objects/OrganizationId.js";
 import { InvoiceId } from "../../invoice/value-objects/InvoiceId.js";
@@ -19,6 +20,13 @@ export interface IPaymentRepository {
    * Retrieves a Payment by its sequential reference number under an organization.
    */
   findByReference(orgId: OrganizationId, ref: PaymentReference): Promise<Result<Payment>>;
+
+  /**
+   * Retrieves a Payment by the provider reference issued when processing started.
+   * Gateway callbacks carry only this reference, so lookups must not rely on
+   * in-process state that disappears with a restart.
+   */
+  findByGatewayReference(ref: GatewayReference): Promise<Result<Payment>>;
 
   /**
    * Retrieves a Payment by its transaction hash.

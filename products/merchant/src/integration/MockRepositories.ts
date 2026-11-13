@@ -21,6 +21,7 @@ import {
   Payment,
   PaymentId,
   PaymentReference,
+  GatewayReference,
   TransactionHash,
   IAccountsReceivableRepository,
   AccountsReceivable,
@@ -242,6 +243,15 @@ export class MockPaymentRepository implements IPaymentRepository {
   public async findByReference(orgId: OrganizationId, ref: PaymentReference): Promise<Result<Payment>> {
     for (const item of this.items.values()) {
       if (item.organizationId.equals(orgId) && item.reference.equals(ref)) {
+        return Result.ok(item);
+      }
+    }
+    return Result.fail(ResultError.notFound("Payment not found."));
+  }
+
+  public async findByGatewayReference(ref: GatewayReference): Promise<Result<Payment>> {
+    for (const item of this.items.values()) {
+      if (item.gatewayReference && item.gatewayReference.equals(ref)) {
         return Result.ok(item);
       }
     }

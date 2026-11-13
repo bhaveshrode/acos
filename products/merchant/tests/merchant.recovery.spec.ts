@@ -172,6 +172,32 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     await frontend.issueInvoice(deliveredInvoice.id);
     await frontend.sendInvoice(deliveredInvoice.id);
 
+    // 7c. Collect a payment before the restart. The callback the gateway sends
+    // afterwards carries only its reference, so resolving the payment must not
+    // depend on the process that initiated it.
+    const payableInvoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-REC-PAY-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [
+        { description: "Payable Services", quantity: 1, unitPrice: 120, taxRate: 0 }
+      ]
+    });
+    await frontend.issueInvoice(payableInvoice.id);
+    await frontend.sendInvoice(payableInvoice.id);
+    const pendingPayment = await frontend.collectPayment(payableInvoice.id);
+    expect(pendingPayment.status).toBe("PROCESSING");
+
+    const preRestartPayment = await boundary.prismaClient.payment.findFirst({
+      where: { invoiceId: payableInvoice.id }
+    });
+    expect(preRestartPayment).toBeDefined();
+    const callbackReference = preRestartPayment.gatewayReference;
+    expect(callbackReference).toBeDefined();
+
     // Seed an outbox record through the production writer. Counting the whole
     // table only passed when another spec file happened to run first and leave
     // rows behind, so the suite passed or failed depending on file scheduling.
@@ -208,6 +234,27 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     // 9b. Verify the invoice sent before the restart still reads as SENT
     const survivedSent = await frontend.getInvoice(deliveredInvoice.id);
     expect(survivedSent.status).toBe("SENT");
+
+    // 9c. Deliver the callback issued before the restart. Only the reference
+    // travels with it, so this proves confirmation survives a process boundary.
+    const confirmed = await frontend.simulateWebhook(callbackReference, true);
+    expect(confirmed.status).toBe("CONFIRMED");
+
+    const paidInvoice = await frontend.getInvoice(payableInvoice.id);
+    expect(paidInvoice.status).toBe("PAID");
+
+    const confirmedPaymentRow = await boundary.prismaClient.payment.findUnique({
+      where: { id: preRestartPayment.id }
+    });
+    expect(confirmedPaymentRow.status).toBe("CONFIRMED");
+
+    const confirmedEventProcessed = await waitFor(async () => {
+      const record = await boundary.prismaClient.outboxEvent.findFirst({
+        where: { eventType: "PaymentConfirmed", aggregateId: preRestartPayment.id }
+      });
+      return record?.processed === true;
+    });
+    expect(confirmedEventProcessed).toBe(true);
 
     // 10. Verify Idempotency Record Survival
     // Replaying exact signup request should return the cached response (201) instead of 409
