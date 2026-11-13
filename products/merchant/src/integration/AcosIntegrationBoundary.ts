@@ -957,136 +957,147 @@ export class AcosIntegrationBoundary {
       throw new Error(`No payment aggregate registered under gateway reference: ${gatewayReference}`);
     }
 
-    const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
-    if (paymentRes.isFailure) {
-      throw new Error(`Payment aggregate associated with ID ${paymentId} not found.`);
-    }
-
-    const payment = paymentRes.value;
-
-    // Idempotency: Ignore duplicate webhooks if payment is already confirmed
-    if (payment.status === "CONFIRMED") {
-      this.logger.info("processPaymentWebhook: Duplicate webhook received. Payment is already CONFIRMED. Ignoring.");
-      const mapper = new PaymentMapper();
-      return mapper.map(payment);
-    }
-
+    // Gateway I/O stays outside the unit of work so no DB transaction is held
+    // open across an external call.
     const providerResponse = await this.paymentProvider.completePayment(gatewayReference, success);
 
-    const attemptId = new UniqueEntityID();
-
-    if (success) {
-      const txHash = TransactionHash.create(providerResponse.transactionHash!).value;
-      const count = ConfirmationCount.create(1).value;
-
-      const confirmRes = confirmPayment(payment, attemptId, txHash, count);
-      if (confirmRes.isFailure) {
-        throw new Error(confirmRes.error.message);
+    const payment = await this.withinTransaction(async () => {
+      const paymentRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      if (paymentRes.isFailure) {
+        throw new Error(`Payment aggregate associated with ID ${paymentId} not found.`);
       }
-      this.logger.info("processPaymentWebhook: Payment status marked as CONFIRMED.");
 
-      // ========================================================
-      // RECONCILIATION ENGINE (PHASE 6)
-      // ========================================================
-      for (const allocation of payment.allocations) {
-        // 1. Load target Invoice
-        const invoiceRes = await this.invoiceRepository.findById(allocation.invoiceId);
-        if (invoiceRes.isFailure) {
-          throw new Error(`Reconciliation Obligation Target Not Found: Invoice ${allocation.invoiceId.value} not found.`);
+      const payment = paymentRes.value;
+
+      // Idempotency: Ignore duplicate webhooks if payment is already confirmed
+      if (payment.status === "CONFIRMED") {
+        this.logger.info("processPaymentWebhook: Duplicate webhook received. Payment is already CONFIRMED. Ignoring.");
+        return payment;
+      }
+
+      const attemptId = new UniqueEntityID();
+
+      if (success) {
+        const txHash = TransactionHash.create(providerResponse.transactionHash!).value;
+        const count = ConfirmationCount.create(1).value;
+
+        const confirmRes = confirmPayment(payment, attemptId, txHash, count);
+        if (confirmRes.isFailure) {
+          throw new Error(confirmRes.error.message);
         }
-        const invoice = invoiceRes.value;
+        this.logger.info("processPaymentWebhook: Payment status marked as CONFIRMED.");
 
-        // 2. Tenant Boundary Isolation Check
-        if (invoice.organizationId.value !== payment.organizationId.value) {
-          throw new Error("Access Denied: Cross-tenant boundary breach. Confirmed payment cannot be reconciled against another merchant's invoice.");
-        }
-
-        // 3. Currency Validation
-        if (invoice.currency !== allocation.allocatedAmount.currency) {
-          throw new Error(`Reconciliation Mismatch: Invoice currency ${invoice.currency} does not match allocation currency ${allocation.allocatedAmount.currency}.`);
-        }
-
-        // 4. Accounts Receivable Bookkeeping
-        let ar: AccountsReceivable;
-        const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
-        if (arRes.isSuccess) {
-          ar = arRes.value;
-        } else {
-          const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
-          if (openRes.isFailure) {
-            throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+        // ========================================================
+        // RECONCILIATION ENGINE (PHASE 6)
+        // ========================================================
+        for (const allocation of payment.allocations) {
+          // 1. Load target Invoice
+          const invoiceRes = await this.invoiceRepository.findById(allocation.invoiceId);
+          if (invoiceRes.isFailure) {
+            throw new Error(`Reconciliation Obligation Target Not Found: Invoice ${allocation.invoiceId.value} not found.`);
           }
-          ar = openRes.value;
-        }
+          const invoice = invoiceRes.value;
 
-        // Ensure obligation is registered in AR
-        const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
-        if (registerRes.isFailure) {
-          throw new Error(`Accounts Receivable booking rejected: ${registerRes.error.message}`);
-        }
+          // 2. Tenant Boundary Isolation Check
+          if (invoice.organizationId.value !== payment.organizationId.value) {
+            throw new Error("Access Denied: Cross-tenant boundary breach. Confirmed payment cannot be reconciled against another merchant's invoice.");
+          }
 
-        // Apply allocation to AR entries
-        const settlementId = new SettlementId(payment.id.value);
-        const creditPolicy = new CreditAllocationPolicy();
-        const applyRes = applyReceivablePayment(
-          ar,
-          settlementId,
-          invoice.id,
-          Money.create(allocation.allocatedAmount.amount, allocation.allocatedAmount.currency).value,
-          creditPolicy
-        );
-        if (applyRes.isFailure) {
-          throw new Error(`Accounts Receivable booking rejected: ${applyRes.error.message}`);
-        }
-        await this.accountsReceivableRepository.save(ar);
+          // 3. Currency Validation
+          if (invoice.currency !== allocation.allocatedAmount.currency) {
+            throw new Error(`Reconciliation Mismatch: Invoice currency ${invoice.currency} does not match allocation currency ${allocation.allocatedAmount.currency}.`);
+          }
 
-        // 5. Update Invoice Obligation Status (handling cumulative multi-payments)
-        const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
-        let cumulativePaid = 0;
-        if (allPaymentsRes.isSuccess) {
-          // Sum allocations from CONFIRMED payments
-          for (const p of allPaymentsRes.value) {
-            const isConfirmed = p.status === "CONFIRMED" || p.id.equals(payment.id); // Include the current confirmed payment
-            if (isConfirmed) {
-              for (const a of p.allocations) {
-                if (a.invoiceId.equals(invoice.id)) {
-                  cumulativePaid += a.allocatedAmount.amount;
+          // 4. Accounts Receivable Bookkeeping
+          let ar: AccountsReceivable;
+          const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
+          if (arRes.isSuccess) {
+            ar = arRes.value;
+          } else {
+            const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
+            if (openRes.isFailure) {
+              throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+            }
+            ar = openRes.value;
+          }
+
+          // Ensure obligation is registered in AR
+          const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
+          if (registerRes.isFailure) {
+            throw new Error(`Accounts Receivable booking rejected: ${registerRes.error.message}`);
+          }
+
+          // Apply allocation to AR entries
+          const settlementId = new SettlementId(payment.id.value);
+          const creditPolicy = new CreditAllocationPolicy();
+          const applyRes = applyReceivablePayment(
+            ar,
+            settlementId,
+            invoice.id,
+            Money.create(allocation.allocatedAmount.amount, allocation.allocatedAmount.currency).value,
+            creditPolicy
+          );
+          if (applyRes.isFailure) {
+            throw new Error(`Accounts Receivable booking rejected: ${applyRes.error.message}`);
+          }
+          await this.accountsReceivableRepository.save(ar);
+
+          // 5. Update Invoice Obligation Status (handling cumulative multi-payments)
+          const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
+          let cumulativePaid = 0;
+          if (allPaymentsRes.isSuccess) {
+            // Sum allocations from CONFIRMED payments
+            for (const p of allPaymentsRes.value) {
+              const isConfirmed = p.status === "CONFIRMED" || p.id.equals(payment.id); // Include the current confirmed payment
+              if (isConfirmed) {
+                for (const a of p.allocations) {
+                  if (a.invoiceId.equals(invoice.id)) {
+                    cumulativePaid += a.allocatedAmount.amount;
+                  }
                 }
               }
             }
           }
-        }
 
-        const cumulativeMoney = Money.create(cumulativePaid, invoice.currency).value;
-        const recordRes = recordPayment(invoice, cumulativeMoney);
-        if (recordRes.isFailure) {
-          throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
-        }
-        await this.invoiceRepository.save(invoice);
+          const cumulativeMoney = Money.create(cumulativePaid, invoice.currency).value;
+          const recordRes = recordPayment(invoice, cumulativeMoney);
+          if (recordRes.isFailure) {
+            throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
+          }
+          const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+          if (invoiceSaveRes.isFailure) {
+            throw new Error(`Failed to save reconciled invoice: ${invoiceSaveRes.error.message}`);
+          }
 
-        // Publish ACOS invoice reconciliation events (e.g. InvoicePaid, InvoicePartiallyPaid, InvoiceOverpaid)
-        if (invoice.domainEvents.length > 0) {
-          this.logger.info(`Publishing ACOS invoice reconciliation events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
-          await this.eventBus.publishAll(invoice.domainEvents);
-          invoice.clearDomainEvents();
+          // Publish ACOS invoice reconciliation events (e.g. InvoicePaid, InvoicePartiallyPaid, InvoiceOverpaid)
+          if (invoice.domainEvents.length > 0) {
+            this.logger.info(`Publishing ACOS invoice reconciliation events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
+            await this.eventBus.publishAll(invoice.domainEvents);
+            invoice.clearDomainEvents();
+          }
         }
+        this.logger.info("processPaymentWebhook: Reconciliation completed successfully.");
+
+      } else {
+        const failRes = failPayment(
+          payment,
+          attemptId,
+          errorCode || providerResponse.errorCode || "DECLINED",
+          errorMessage || providerResponse.errorMessage || "Declined by gateway"
+        );
+        if (failRes.isFailure) {
+          throw new Error(failRes.error.message);
+        }
+        this.logger.info("processPaymentWebhook: Payment marked as FAILED.");
       }
-      this.logger.info("processPaymentWebhook: Reconciliation completed successfully.");
 
-    } else {
-      const failRes = failPayment(
-        payment,
-        attemptId,
-        errorCode || providerResponse.errorCode || "DECLINED",
-        errorMessage || providerResponse.errorMessage || "Declined by gateway"
-      );
-      if (failRes.isFailure) {
-        throw new Error(failRes.error.message);
+      const saveRes = await this.paymentRepository.save(payment);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
       }
-      this.logger.info("processPaymentWebhook: Payment marked as FAILED.");
-    }
 
-    await this.paymentRepository.save(payment);
+      return payment;
+    });
 
     const mapper = new PaymentMapper();
     return mapper.map(payment);
