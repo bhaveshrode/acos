@@ -113,6 +113,10 @@ export {
 } from "./MockRepositories.js";
 export { SandboxPaymentProvider, PaymentResponse, IPaymentProvider } from "./SandboxPaymentProvider.js";
 
+export const OUTBOX_MAX_ATTEMPTS = 10;
+export const OUTBOX_BASE_RETRY_DELAY_MS = 1_000;
+export const OUTBOX_MAX_RETRY_DELAY_MS = 5 * 60_000;
+
 /**
  * Orchestrator acting as the gateway/boundary between Merchant and ACOS subsystems.
  */
@@ -137,6 +141,8 @@ export class AcosIntegrationBoundary {
   public prismaClient: any = null;
   private isProcessingOutbox = false;
   private outboxDrainPending = false;
+  private outboxRetryTimer: NodeJS.Timeout | null = null;
+  private outboxRetryAt = 0;
 
   // Sandbox provider context
   public readonly paymentProvider: IPaymentProvider = new SandboxPaymentProvider();
@@ -209,7 +215,11 @@ export class AcosIntegrationBoundary {
 
     try {
       const records = await this.prismaClient.outboxEvent.findMany({
-        where: { processed: false },
+        where: {
+          processed: false,
+          deadLetteredAt: null,
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }]
+        },
         orderBy: { createdAt: "asc" }
       });
 
@@ -219,13 +229,37 @@ export class AcosIntegrationBoundary {
           const domainEvent = EventSerializer.deserialize(record.eventType, record.payload);
           await rawBus.publish(domainEvent);
         } catch (err: any) {
+          const retryCount = (record.retryCount ?? 0) + 1;
+          const lastError = String(err?.message ?? err);
+
+          if (retryCount >= OUTBOX_MAX_ATTEMPTS) {
+            await this.prismaClient.outboxEvent.update({
+              where: { id: record.id },
+              data: {
+                retryCount,
+                lastError,
+                nextAttemptAt: null,
+                deadLetteredAt: new Date()
+              }
+            });
+            this.logger.warn("Outbox event dead-lettered after repeated delivery failures", {
+              id: record.id,
+              eventType: record.eventType,
+              retryCount
+            });
+            continue;
+          }
+
+          const nextAttemptAt = new Date(Date.now() + this.outboxRetryDelayMs(retryCount));
           await this.prismaClient.outboxEvent.update({
             where: { id: record.id },
             data: {
-              retryCount: { increment: 1 },
-              lastError: String(err?.message ?? err)
+              retryCount,
+              lastError,
+              nextAttemptAt
             }
           });
+          this.scheduleOutboxRetry(nextAttemptAt);
           continue;
         }
 
@@ -234,7 +268,8 @@ export class AcosIntegrationBoundary {
           data: {
             processed: true,
             processedAt: new Date(),
-            lastError: null
+            lastError: null,
+            nextAttemptAt: null
           }
         });
       }
@@ -243,6 +278,29 @@ export class AcosIntegrationBoundary {
     } finally {
       this.isProcessingOutbox = false;
     }
+  }
+
+  private outboxRetryDelayMs(retryCount: number): number {
+    return Math.min(OUTBOX_BASE_RETRY_DELAY_MS * 2 ** (retryCount - 1), OUTBOX_MAX_RETRY_DELAY_MS);
+  }
+
+  /**
+   * A failed delivery must not wait for unrelated traffic to be retried, so the
+   * earliest scheduled attempt arms a one-shot drain. Keeping only the earliest
+   * timer avoids a timer per row; the callback re-reads eligibility from the DB.
+   */
+  private scheduleOutboxRetry(nextAttemptAt: Date): void {
+    const at = nextAttemptAt.getTime();
+    if (this.outboxRetryTimer && this.outboxRetryAt <= at) return;
+    if (this.outboxRetryTimer) clearTimeout(this.outboxRetryTimer);
+
+    this.outboxRetryAt = at;
+    this.outboxRetryTimer = setTimeout(() => {
+      this.outboxRetryTimer = null;
+      this.outboxRetryAt = 0;
+      void this.processOutboxAsynchronously();
+    }, Math.max(0, at - Date.now()));
+    this.outboxRetryTimer.unref?.();
   }
 
   /**
@@ -1390,6 +1448,11 @@ export class AcosIntegrationBoundary {
    * Gracefully shuts down ACOS subsystems.
    */
   public async disconnect(): Promise<void> {
+    if (this.outboxRetryTimer) {
+      clearTimeout(this.outboxRetryTimer);
+      this.outboxRetryTimer = null;
+      this.outboxRetryAt = 0;
+    }
     if (this.isStarted) {
       this.logger.info("Shutting down ACOS Integration Boundary...");
       await this.runtime.shutdown();
