@@ -89,6 +89,7 @@ import {
 } from "acos-backend/application";
 
 import { OutboxEventBus } from "./OutboxEventBus.js";
+import { RedisStreamEventBus } from "../adapters/messaging/event-bus/RedisStreamEventBus.js";
 import type { PrismaBusinessProfileRepository } from "./prisma/PrismaBusinessProfileRepository.js";
 import { TransactionScope } from "../adapters/transactions/scopes/TransactionScope.js";
 import { AcosPasswordHasher } from "./AcosPasswordHasher.js";
@@ -126,6 +127,19 @@ export interface ConnectOptions {
   allowInMemory?: boolean;
 }
 
+export interface BoundaryBusOptions {
+  /**
+   * Redis URL for the broker transport. Without it the boundary stays on the
+   * in-process bus and outbox events never reach other replicas.
+   */
+  brokerUrl?: string;
+  /**
+   * Names this replica's consumer group. Every replica must be unique so each
+   * one receives every event.
+   */
+  replicaId?: string;
+}
+
 /**
  * Orchestrator acting as the gateway/boundary between Merchant and ACOS subsystems.
  */
@@ -147,6 +161,7 @@ export class AcosIntegrationBoundary {
   private readonly authService = new AuthenticationService(this.passwordHasher);
   private mediator!: Mediator;
   public readonly eventBus: IEventBus;
+  private readonly transport: RedisStreamEventBus | null = null;
   public prismaClient: any = null;
   private isProcessingOutbox = false;
   private outboxDrainPending = false;
@@ -162,11 +177,24 @@ export class AcosIntegrationBoundary {
 
   constructor(
     private readonly logger: Logger,
-    runtimeFactory?: any
+    runtimeFactory?: any,
+    busOptions: BoundaryBusOptions = {}
   ) {
     this.runtime = new ACOSRuntime(runtimeFactory);
-    const rawBus = MessagingFactory.getEventBus();
-    this.eventBus = new OutboxEventBus(rawBus, this);
+
+    if (busOptions.brokerUrl) {
+      this.transport = new RedisStreamEventBus({
+        url: busOptions.brokerUrl,
+        replicaId: busOptions.replicaId,
+        logger
+      });
+      this.eventBus = new OutboxEventBus(this.transport, this);
+    } else {
+      this.logger.warn(
+        "Starting with the in-process event bus: outbox events will not reach other replicas. Set MERCHANT_BROKER_URL to enable the broker transport."
+      );
+      this.eventBus = new OutboxEventBus(MessagingFactory.getEventBus(), this);
+    }
   }
 
   /**
@@ -405,6 +433,10 @@ export class AcosIntegrationBoundary {
         );
       }
 
+      if (this.transport) {
+        await this.transport.start();
+      }
+
       await this.runtime.initialize(env);
       this.isInitialized = true;
 
@@ -483,6 +515,7 @@ export class AcosIntegrationBoundary {
       return startResult;
     } catch (error: any) {
       this.logger.error("Failed to connect ACOS Integration Boundary", error);
+      await this.transport?.close();
       throw new Error(`ACOS Connection Failed: ${error.message}`);
     }
   }
@@ -1518,6 +1551,7 @@ export class AcosIntegrationBoundary {
       this.outboxRetryTimer = null;
       this.outboxRetryAt = 0;
     }
+    await this.transport?.close();
     if (this.isStarted) {
       this.logger.info("Shutting down ACOS Integration Boundary...");
       await this.runtime.shutdown();

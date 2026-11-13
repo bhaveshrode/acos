@@ -29,7 +29,10 @@ async function startServer() {
 
   mainLogger.info("Initializing ACOS Integration Boundary...");
   const boundaryLogger = new Logger("AcosDbBoundary", writer);
-  const boundary = new AcosIntegrationBoundary(boundaryLogger, runtimeFactory);
+  const boundary = new AcosIntegrationBoundary(boundaryLogger, runtimeFactory, {
+    brokerUrl: config.brokerUrl ?? undefined,
+    replicaId: config.replicaId
+  });
 
   mainLogger.info("Instantiating Merchant Backend Server...");
   const backend = new MerchantBackend(config, boundary, writer);

@@ -1,0 +1,28 @@
+name: Lockfile Refresh
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    name: Regenerate package-lock.json
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: merchant/phase-5d-broker-transport
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Update lockfile only
+        run: npm install --package-lock-only
+
+      - name: Upload lockfile artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
