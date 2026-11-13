@@ -108,6 +108,22 @@ describe("kernel surface conformance", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("reaches backend sources only through the declared entry points", () => {
+    const offenders: string[] = [];
+    const deepSpecifier =
+      /(?:\bfrom\s+|\bimport\(\s*)["']([^"']*backend\/src\/[^"']*)["']/g;
+
+    for (const root of ["products", "runtime"]) {
+      for (const file of typescriptFiles(join(repoRoot, root))) {
+        for (const match of read(file).matchAll(deepSpecifier)) {
+          offenders.push(`${relative(repoRoot, file)} → ${match[1]}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it("does not reopen deep resolution through a tsconfig path wildcard", () => {
     for (const config of ["products/merchant/tsconfig.json", "runtime/tsconfig.json"]) {
       const path = join(repoRoot, config);
