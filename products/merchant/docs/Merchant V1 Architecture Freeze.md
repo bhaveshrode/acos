@@ -113,7 +113,9 @@ The release criteria baseline is strictly frozen as follows:
 | **Integration Tests** | 61 | Local Express server (Loopback port 9001) |
 | **Golden E2E Flow** | 1 | Complete signup-to-reconciliation path (Port 9002) |
 | **Failure Tests** | 9 | Infrastructure and network degradation tests (Port 9003) |
-| **Total** | **71** | **All tests must pass cleanly (`71/71 PASS`)** |
+| **Database Tests** | 5 | PostgreSQL required (port 9005); skipped when unreachable |
+| **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
+| **Total** | **77** | **All tests must pass cleanly (`77/77 PASS`)** |
 
 ---
 
