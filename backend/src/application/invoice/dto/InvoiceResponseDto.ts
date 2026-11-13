@@ -12,6 +12,7 @@ export interface InvoiceResponseDto {
   paymentTerms: string;
   issueDate: string;
   dueDate: string;
+  sentAt?: string | null;
   subtotal: number;
   taxTotal: number;
   discountTotal: number;

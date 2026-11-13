@@ -156,6 +156,22 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     });
     expect(invoice.status).toBe("DRAFT");
 
+    // 7b. Issue and send a second invoice before the restart. SENT used to be
+    // held in an in-memory map, so it disappeared with the process.
+    const deliveredInvoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-REC-SENT-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [
+        { description: "Delivered Services", quantity: 1, unitPrice: 75, taxRate: 0 }
+      ]
+    });
+    await frontend.issueInvoice(deliveredInvoice.id);
+    await frontend.sendInvoice(deliveredInvoice.id);
+
     // Seed an outbox record through the production writer. Counting the whole
     // table only passed when another spec file happened to run first and leave
     // rows behind, so the suite passed or failed depending on file scheduling.
@@ -188,6 +204,10 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     // 9. Verify Active Session Survival
     const me = await frontend.queryMe();
     expect(me.email).toBe(email);
+
+    // 9b. Verify the invoice sent before the restart still reads as SENT
+    const survivedSent = await frontend.getInvoice(deliveredInvoice.id);
+    expect(survivedSent.status).toBe("SENT");
 
     // 10. Verify Idempotency Record Survival
     // Replaying exact signup request should return the cached response (201) instead of 409

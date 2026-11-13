@@ -65,7 +65,6 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     (boundary.paymentProvider as SandboxPaymentProvider).clear();
     boundary.gatewayRefToPaymentId.clear();
     boundary.businessMetadata.clear();
-    boundary.invoiceSentStatus.clear();
     frontend.clearSessionToken();
   });
 

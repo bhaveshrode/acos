@@ -19,6 +19,7 @@ export class InvoiceExtractor {
       paymentTerms: snapshot.paymentTerms,
       issueDate: snapshot.issueDate,
       dueDate: snapshot.dueDate,
+      sentAt: snapshot.sentAt,
       discountType: snapshot.discount ? snapshot.discount.type : null,
       discountValue: snapshot.discount ? snapshot.discount.value : null,
       periodStartDate: snapshot.period ? snapshot.period.startDate : null,

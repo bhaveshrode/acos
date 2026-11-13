@@ -197,6 +197,7 @@ export { InvoicePartiallyPaid } from "../business/invoice/events/InvoicePartiall
 export { InvoiceUpdated } from "../business/invoice/events/InvoiceUpdated.js";
 export { InvoiceVoided } from "../business/invoice/events/InvoiceVoided.js";
 export { issueInvoice } from "../business/invoice/operations/IssueInvoice.js";
+export { markInvoiceSent } from "../business/invoice/operations/MarkInvoiceSent.js";
 export { recordPayment } from "../business/invoice/operations/RecordPayment.js";
 export type { IInvoiceRepository } from "../business/invoice/repositories/IInvoiceRepository.js";
 export { InvoiceNumberGenerator } from "../business/invoice/services/InvoiceNumberGenerator.js";
