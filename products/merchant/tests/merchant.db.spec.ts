@@ -67,7 +67,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     frontend = new MerchantFrontend(backend, writer);
 
     // Bootstrap with real dbUrl
-    await boundary.connect("test", dbUrl);
+    await boundary.connect("test", dbUrl, { allowInProcessBus: true });
     await backend.start();
   });
 
@@ -510,7 +510,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const second = new AcosIntegrationBoundary(new Logger("AcosDbBoundarySecond", writer), runtimeFactory2);
 
     try {
-      await second.connect("test", dbUrl);
+      await second.connect("test", dbUrl, { allowInProcessBus: true });
 
       const row = await prisma.outboxEvent.create({
         data: {

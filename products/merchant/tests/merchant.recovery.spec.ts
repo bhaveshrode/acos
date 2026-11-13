@@ -95,7 +95,7 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     backend = new MerchantBackend(config, boundary, writer);
     frontend = new MerchantFrontend(backend, writer);
 
-    await boundary.connect("test", dbUrl);
+    await boundary.connect("test", dbUrl, { allowInProcessBus: true });
     await backend.start();
 
     // 5. Setup state: User signup and login
@@ -261,7 +261,7 @@ describe("ACOS Merchant — Track D4 Restart & Recovery Validation Suite", () =>
     // Restore session token to simulate client retaining its cookie/header
     (frontend as any).sessionToken = tokenBeforeRestart;
 
-    await boundary.connect("test", dbUrl);
+    await boundary.connect("test", dbUrl, { allowInProcessBus: true });
     await backend.start();
 
     // 9. Verify Active Session Survival
