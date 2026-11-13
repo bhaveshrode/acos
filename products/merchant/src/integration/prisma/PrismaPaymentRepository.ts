@@ -28,7 +28,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         organizationId: row.organizationId,
         customerId: "",
         reference: row.reference,
-        amount: row.amount,
+        amount: row.amount.toNumber(),
         currency: row.currency,
         status: row.status,
         methodType: "SANDBOX",
@@ -42,7 +42,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         allocations: [{
           id: row.id,
           invoiceId: row.invoiceId,
-          amount: row.amount,
+          amount: row.amount.toNumber(),
           currency: row.currency,
           status: row.status
         }],
@@ -70,7 +70,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         organizationId: row.organizationId,
         customerId: "",
         reference: row.reference,
-        amount: row.amount,
+        amount: row.amount.toNumber(),
         currency: row.currency,
         status: row.status,
         methodType: "SANDBOX",
@@ -84,7 +84,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         allocations: [{
           id: row.id,
           invoiceId: row.invoiceId,
-          amount: row.amount,
+          amount: row.amount.toNumber(),
           currency: row.currency,
           status: row.status
         }],
@@ -119,7 +119,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           organizationId: row.organizationId,
           customerId: "",
           reference: row.reference,
-          amount: row.amount,
+          amount: row.amount.toNumber(),
           currency: row.currency,
           status: row.status,
           methodType: "SANDBOX",
@@ -133,7 +133,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           allocations: [{
             id: row.id,
             invoiceId: row.invoiceId,
-            amount: row.amount,
+            amount: row.amount.toNumber(),
             currency: row.currency,
             status: row.status
           }],
