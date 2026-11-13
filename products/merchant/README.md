@@ -18,6 +18,7 @@ Prisma Database Client ────► PostgreSQL (durable persistence)
 
 -   **Authoritative Boundary**: The merchant application never updates business or financial states directly. All mutations pass through [AcosIntegrationBoundary.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/integration/AcosIntegrationBoundary.ts) command handlers.
 -   **Durable Outbox**: In production mode, mutations write events to the `OutboxEvent` table. The outbox processor polls this table sequentially, publishing events to the message bus to ensure transactional integrity.
+-   **Broker Transport**: When `MERCHANT_BROKER_URL` is set, the message bus is backed by a Redis stream, so events reach every replica instead of only the process that wrote them. Each replica consumes under its own group; a failed handler stays pending and is reclaimed, and repeated failures are dead-lettered to `acos.events.dead`. Without the URL the boundary keeps the in-process bus and cannot deliver events to other replicas.
 
 ---
 
@@ -40,7 +41,11 @@ PORT=9000
 ENV=production
 DB_URL=postgresql://user:password@localhost:5432/acos_db
 STRIPE_WEBHOOK_SECRET=whsec_your_secret
+MERCHANT_BROKER_URL=redis://localhost:6379
+MERCHANT_REPLICA_ID=merchant-1
 ```
+
+`MERCHANT_BROKER_URL` enables cross-replica event delivery; without it the boundary runs on the in-process bus. `MERCHANT_REPLICA_ID` names the consumer group and must be unique per replica (it defaults to the hostname).
 
 ---
 
@@ -51,6 +56,7 @@ The merchant validation suite tests integration boundary logic, failure resistan
 *   **Integration Specs**: Checks logins, multi-tenant boundaries, and invoice state transitions.
 *   **Failure Specs**: Verifies correct error codes during connection loss or invalid webhook signatures.
 *   **Recovery Specs**: Checks that active sessions, outbox queues, and idempotency states survive server restarts.
+*   **Broker Specs**: Proves cross-replica delivery, per-replica dedupe, handler retry and dead-lettering against a real Redis stream (skipped when Redis is unreachable).
 *   **Golden E2E Flow**: Resolves a complete signup ──► onboard ──► customer ──► invoice ──► payment collection ──► webhook reconciliation path.
 
 ```bash

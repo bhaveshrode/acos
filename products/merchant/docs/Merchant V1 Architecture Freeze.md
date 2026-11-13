@@ -85,8 +85,9 @@ The persistence layer supports two execution contexts:
 ## 7. Event & Outbox Architecture
 To guarantee at-least-once domain event delivery and avoid dual-write consistency issues:
 1. Command handlers save the aggregate, then publish its domain events. `OutboxEventBus` inserts each event into the `OutboxEvent` table using the caller's transaction client, so the aggregate write and the event row commit together.
-2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices and the receivable ledger, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the raw Event Bus and marking it processed. A drain first claims its batch: a guarded `updateMany` stamps `lockedBy` and `lockedUntil` on rows whose lease has expired or was never taken, so two processes sharing the database split the batch instead of publishing the same event twice, and a process that dies mid-publish frees its rows when the lease runs out. A publish failure increments `retryCount`, stores `lastError`, and schedules the next attempt after an exponential backoff (1s doubling to a 5-minute cap), with the boundary arming a one-shot drain at the earliest due time so retries do not depend on unrelated traffic. After 10 failed attempts the row is dead-lettered (`deadLetteredAt`) and excluded from further drains instead of retrying forever.
+2. The boundary wraps invoice creation, issuing and sending, payment submission, and payment-webhook reconciliation in a PostgreSQL transaction via `TransactionScope`. Multi-aggregate work — confirming a payment, reconciling its allocations onto invoices and the receivable ledger, and enqueuing the resulting events — commits or rolls back as one unit, and gateway calls stay outside the transaction. A webhook resolves its payment from the `gatewayReference` stored on the payment row, so a callback that arrives after a restart confirms the same payment instead of depending on process-memory state. `processOutboxAsynchronously` drains unprocessed rows after commit — never mid-transaction — publishing each event to the configured Event Bus transport and marking it processed. A drain first claims its batch: a guarded `updateMany` stamps `lockedBy` and `lockedUntil` on rows whose lease has expired or was never taken, so two processes sharing the database split the batch instead of publishing the same event twice, and a process that dies mid-publish frees its rows when the lease runs out. A publish failure increments `retryCount`, stores `lastError`, and schedules the next attempt after an exponential backoff (1s doubling to a 5-minute cap), with the boundary arming a one-shot drain at the earliest due time so retries do not depend on unrelated traffic. After 10 failed attempts the row is dead-lettered (`deadLetteredAt`) and excluded from further drains instead of retrying forever.
 3. The payment lifecycle is enqueued the same way: `PaymentSubmitted` and `PaymentProcessingStarted` when a request is collected, `PaymentAllocated` and `PaymentConfirmed` when the webhook confirms, and `PaymentFailed` when it declines — each inside the transaction that writes the payment row.
+4. With `MERCHANT_BROKER_URL` set, the transport is a Redis stream. `publish` dispatches to local subscribers first and only then appends the event to `acos.events`, so the writing process keeps the synchronous read-your-writes behavior it had on the in-process bus. Each replica consumes under its own group (`acos:merchant:<MERCHANT_REPLICA_ID>`), skips messages it originated, and acknowledges a message only after its local handlers succeed. A failed handler leaves the entry in the group's pending list, where `XAUTOCLAIM` redelivers it after 30 seconds; ten failures within that replica's own retry counter move it to `acos.events.dead`. Republished outbox rows are suppressed per replica by `eventId` for 24 hours, and the stream is capped near 100,000 entries. The outbox row is marked processed only after both the local dispatch and the broker append succeed.
 
 ---
 
@@ -115,20 +116,22 @@ The release criteria baseline is strictly frozen as follows:
 | **Failure Tests** | 10 | Infrastructure and network degradation tests (Port 9003) |
 | **Database Tests** | 6 | PostgreSQL required (port 9005); skipped when unreachable |
 | **Restart & Recovery** | 1 | Two application lifecycles over PostgreSQL (port 9006); skipped when unreachable |
-| **Total** | **79** | **All tests must pass cleanly (`79/79 PASS`)** |
+| **Broker Tests** | 7 | Redis required (CI service); skipped when unreachable |
+| **Total** | **86** | **All tests must pass cleanly (`86/86 PASS`)** |
 
 ---
 
 ## 11. Known Development Fallbacks
 * **Mock Repositories**: Opt-in only. A boundary started without a database URL aborts unless the caller passes `allowInMemory`, so no deployment runs on repositories that lose state at exit. The mock-mode suites pass the flag explicitly.
 * **Sandbox Payment Provider**: Simulates provider integrations rather than querying live Stripe endpoints. It holds no in-process state, so a simulated callback can be delivered to any process that can reach the database.
-* **Local Event Bus**: Utilizes in-memory dispatching rather than external message queues (e.g. RabbitMQ/Kafka). Durability comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them.
+* **Local Event Bus**: Used only when no `MERCHANT_BROKER_URL` is configured, in which case outbox events stay inside the process that wrote them. Durability still comes from the outbox, which retains events in PostgreSQL until a subscriber accepts them.
 
 ---
 
 ## 12. Production Dependencies
 * **Runtime**: Node.js v18+
 * **Database**: PostgreSQL v14+
+* **Broker**: Redis v7+ (stream transport; optional, required for cross-replica event delivery)
 * **ORM**: Prisma Client v7.9.0
 * **Hashing & Security**: `bcryptjs` v2.4.3
 * **Web Framework**: Express.js v4.21.2
