@@ -59,7 +59,7 @@ RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
 
 The merchant validation suite tests integration boundary logic, failure resistance, PostgreSQL syncing, and full E2E paths:
 
-*   **Integration Specs**: Checks logins, multi-tenant boundaries, and invoice state transitions.
+*   **Integration Specs**: Checks logins, multi-tenant boundaries, and invoice state transitions, including payment refunds (sandbox provider) re-opening invoice and receivable balances.
 *   **Failure Specs**: Verifies correct error codes during connection loss or invalid webhook signatures.
 *   **Recovery Specs**: Checks that active sessions, outbox queues, and idempotency states survive server restarts.
 *   **Broker Specs**: Proves cross-replica delivery, per-replica dedupe, handler retry and dead-lettering against a real Redis stream (skipped when Redis is unreachable).

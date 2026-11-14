@@ -241,6 +241,87 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(idempRec.statusCode).toBe(201);
   });
 
+  it("should persist refunds and re-open invoice and receivable balances", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_valid_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Refund Merchant");
+    await frontend.login(email, "password123");
+    const biz = await frontend.onboardBusiness("Refund Shop", `refund-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Refund Rita",
+      customerNumber: `CUST-REFUND-${Date.now()}`,
+      primaryContact: { name: "Refund Rita", email: "rita@example.com" },
+      billingAddress: { line1: "1 Return Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-REFUND-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Refundable Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    const payment = await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, true);
+
+    const paidInvoice = await frontend.getInvoice(invoice.id);
+    expect(paidInvoice.status).toBe("PAID");
+
+    // Partial refund of 40: payment returns to CONFIRMED, invoice re-opens
+    const partial = await frontend.refundPayment(payment.id, 40, "Partial return");
+    expect(partial.status).toBe("CONFIRMED");
+
+    let refundRows = await prisma.refund.findMany({ where: { paymentId: payment.id } });
+    expect(refundRows).toHaveLength(1);
+    expect(refundRows[0].status).toBe("COMPLETED");
+    expect(refundRows[0].amount.toNumber()).toBe(40);
+    expect(refundRows[0].reason).toBe("Partial return");
+    expect(refundRows[0].organizationId).toBe(biz.id);
+
+    const partialInvoice = await frontend.getInvoice(invoice.id);
+    expect(partialInvoice.status).toBe("PARTIALLY_PAID");
+
+    let arEntry = await prisma.receivableEntry.findFirst({
+      where: { invoiceId: invoice.id }
+    });
+    expect(arEntry.remainingAmount.toNumber()).toBe(40);
+
+    // Refund events reach the outbox
+    const refundEvt = await prisma.outboxEvent.findFirst({
+      where: { eventType: "InvoiceRefunded", aggregateId: invoice.id }
+    });
+    expect(refundEvt).toBeDefined();
+    expect(refundEvt.processed).toBe(true);
+
+    // Full refund of the remaining 60: payment REFUNDED; the kernel invoice
+    // returns to ISSUED and the delivered invoice reports SENT
+    const rest = await frontend.refundPayment(payment.id, 60, "Remaining return");
+    expect(rest.status).toBe("REFUNDED");
+
+    refundRows = await prisma.refund.findMany({ where: { paymentId: payment.id } });
+    expect(refundRows).toHaveLength(2);
+
+    const finalInvoice = await frontend.getInvoice(invoice.id);
+    expect(finalInvoice.status).toBe("SENT");
+
+    arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(100);
+
+    // A fully refunded payment refuses further refunds
+    await expect(frontend.refundPayment(payment.id, 1, "One dollar too many")).rejects.toThrow(/confirmed payments/i);
+  });
+
   it("stores monetary amounts without binary floating point drift", async () => {
     if (!isDbAvailable) {
       return;

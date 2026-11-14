@@ -5,7 +5,7 @@ import type { LogWriter } from "acos-backend";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
-import type { IPaymentProvider, PaymentCompletion, PaymentResponse } from "../src/integration/PaymentProvider.js";
+import type { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "../src/integration/PaymentProvider.js";
 import {
   RazorpayClient,
   RazorpayPaymentEntity,
@@ -313,6 +313,10 @@ class FailingInitiationProvider implements IPaymentProvider {
 
   public async completePayment(input: PaymentCompletion): Promise<PaymentResponse> {
     return { gatewayReference: input.gatewayReference, status: "PROCESSING" };
+  }
+
+  public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
+    return { gatewayRefundReference: input.paymentId, status: "SUCCEEDED" };
   }
 }
 
