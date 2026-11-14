@@ -966,7 +966,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
     const setupConfirmedPayment = async (localBoundary: AcosIntegrationBoundary, orgSlug: string) => {
       const user = await localBoundary.signUp(`${orgSlug}@example.com`, password, "Async Merchant");
-      const org = await localBoundary.onboardBusiness("Async Shop", orgSlug, "USD", "SaaS", "USA", "ops@async.test");
+      const org = await localBoundary.onboardBusiness(user.id, "Async Shop", orgSlug, "USD", "SaaS", "USA", "ops@async.test");
       const customer = await localBoundary.createCustomer(user.id, {
         organizationId: org.id,
         customerNumber: "CUST-ASYNC-1",
