@@ -304,7 +304,8 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(refundEvt).toBeDefined();
     expect(refundEvt.processed).toBe(true);
 
-    // Full refund of the remaining 60: payment REFUNDED, invoice ISSUED
+    // Full refund of the remaining 60: payment REFUNDED; the kernel invoice
+    // returns to ISSUED and the delivered invoice reports SENT
     const rest = await frontend.refundPayment(payment.id, 60, "Remaining return");
     expect(rest.status).toBe("REFUNDED");
 
@@ -312,7 +313,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(refundRows).toHaveLength(2);
 
     const finalInvoice = await frontend.getInvoice(invoice.id);
-    expect(finalInvoice.status).toBe("ISSUED");
+    expect(finalInvoice.status).toBe("SENT");
 
     arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(100);

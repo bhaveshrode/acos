@@ -763,7 +763,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(arRes.value.getCreditBalance("USD").amount).toBe(100); // 600 - 500 = 100 excess credit
     });
 
-    it("should refund a confirmed payment fully (PAID -> ISSUED, payment REFUNDED)", async () => {
+    it("should refund a confirmed payment fully (PAID -> SENT, payment REFUNDED)", async () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(
         await import("acos-backend").then(m => m.PaymentId.from(payment.id))
@@ -776,8 +776,9 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const refunded = await frontend.refundPayment(payment.id, 500, "Order returned");
       expect(refunded.status).toBe("REFUNDED");
 
+      // The kernel invoice returns to ISSUED; the delivered invoice reports SENT
       const refundedInvoice = await frontend.getInvoice(bobInvoice.id);
-      expect(refundedInvoice.status).toBe("ISSUED");
+      expect(refundedInvoice.status).toBe("SENT");
 
       // The receivable is re-opened to the full obligation
       const arRes = await boundary.accountsReceivableRepository.findByCustomer(
@@ -810,7 +811,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const rest = await frontend.refundPayment(payment.id, 300, "Remaining return");
       expect(rest.status).toBe("REFUNDED");
       const finalInvoice = await frontend.getInvoice(bobInvoice.id);
-      expect(finalInvoice.status).toBe("ISSUED");
+      expect(finalInvoice.status).toBe("SENT");
     });
 
     it("should reject refunds on unconfirmed payments and across tenant boundaries", async () => {
