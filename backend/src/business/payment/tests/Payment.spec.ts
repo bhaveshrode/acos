@@ -121,6 +121,32 @@ describe("Payment Bounded Context Unit Tests (Tasks 15.2 - 15.5)", () => {
       expect(payment.allocations[0].status).toBe(AllocationStatus.ALLOCATED);
     });
 
+    it("should record the gateway payment id idempotently and refuse conflicts", () => {
+      const payment = Payment.create(
+        PaymentId.generate(),
+        orgId,
+        custId,
+        payRef,
+        payAmount,
+        payMethod,
+        invId,
+        allocAmount
+      ).value;
+
+      expect(payment.gatewayPaymentId).toBeNull();
+
+      expect(payment.recordGatewayPaymentId("pay_test_1").isSuccess).toBe(true);
+      expect(payment.gatewayPaymentId).toBe("pay_test_1");
+
+      // Re-delivered callback carrying the same id is fine
+      expect(payment.recordGatewayPaymentId("pay_test_1").isSuccess).toBe(true);
+
+      // A different id means the event does not belong to this payment
+      const conflict = payment.recordGatewayPaymentId("pay_test_2");
+      expect(conflict.isFailure).toBe(true);
+      expect(payment.gatewayPaymentId).toBe("pay_test_1");
+    });
+
     it("should enforce refund totals boundaries", () => {
       const payment = Payment.create(
         PaymentId.generate(),

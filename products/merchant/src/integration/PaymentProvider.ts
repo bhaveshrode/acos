@@ -29,11 +29,15 @@ export interface PaymentCompletion {
 /**
  * Input for returning money on a confirmed payment. `paymentId` is the
  * internal aggregate id; `gatewayPaymentId` is the gateway's own payment
- * identifier when one was captured during collection.
+ * identifier when one was captured during collection; `refundRequestId` is
+ * the internal refund request id, echoed back by gateways that round-trip
+ * notes (e.g. Razorpay) so asynchronous refund webhooks can be matched to
+ * the request that created them.
  */
 export interface RefundRequestInput {
   paymentId: string;
   gatewayPaymentId?: string;
+  refundRequestId?: string;
   amount: number;
   currency: string;
   reason: string;

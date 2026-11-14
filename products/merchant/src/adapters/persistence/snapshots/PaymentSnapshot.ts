@@ -13,6 +13,7 @@ export interface PaymentSnapshot {
   methodDetails: string;
   transactionHash: string | null;
   gatewayReference: string | null;
+  gatewayPaymentId: string | null;
   walletAddress: string | null;
   metadata: Record<string, string>;
   confirmations: number;

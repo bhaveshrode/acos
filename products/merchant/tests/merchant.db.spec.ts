@@ -322,6 +322,84 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     await expect(frontend.refundPayment(payment.id, 1, "One dollar too many")).rejects.toThrow(/confirmed payments/i);
   });
 
+  it("should persist an asynchronous refund request and settle it from the webhook", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_async_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Async Refund Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Async Refund Shop", `refund-async-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Async Rita",
+      customerNumber: `CUST-ASYNC-${Date.now()}`,
+      primaryContact: { name: "Async Rita", email: "rita-async@example.com" },
+      billingAddress: { line1: "2 Return Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-ASYNC-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Refundable Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    const payment = await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+
+    // The paid webhook captures the gateway payment id against the payment row
+    await boundary.processPaymentWebhook(dbPayment.gatewayReference, true, undefined, undefined, "pay_async_1");
+    let paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+    expect(paymentRow.gatewayPaymentId).toBe("pay_async_1");
+
+    // A provider that settles asynchronously leaves the refund REQUESTED
+    const originalProvider = (boundary as any).paymentProvider;
+    (boundary as any).paymentProvider = {
+      refundPayment: async () => ({ gatewayRefundReference: "rfnd_db_1", status: "PROCESSING" })
+    };
+    let refundRequestId: string;
+    try {
+      const requested = await frontend.refundPayment(payment.id, 40, "Async return");
+      expect(requested.status).toBe("REFUND_REQUESTED");
+
+      let refundRow = await prisma.refund.findFirst({ where: { paymentId: payment.id } });
+      expect(refundRow.status).toBe("REQUESTED");
+      expect(refundRow.amount.toNumber()).toBe(40);
+      refundRequestId = refundRow.id;
+
+      // The reversal is deferred while the gateway processes the refund
+      paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+      expect(paymentRow.status).toBe("REFUND_REQUESTED");
+      expect(paymentRow.gatewayPaymentId).toBe("pay_async_1");
+      const untouchedInvoice = await frontend.getInvoice(invoice.id);
+      expect(untouchedInvoice.status).toBe("PAID");
+    } finally {
+      (boundary as any).paymentProvider = originalProvider;
+    }
+
+    // The refund.processed webhook settles the refund and reverses the ledger
+    const settled = await boundary.processRefundWebhook(payment.id, refundRequestId!, true);
+    expect(settled.status).toBe("CONFIRMED");
+
+    const refundRow = await prisma.refund.findFirst({ where: { paymentId: payment.id } });
+    expect(refundRow.status).toBe("COMPLETED");
+    paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+    expect(paymentRow.gatewayPaymentId).toBe("pay_async_1");
+
+    const reopenedInvoice = await frontend.getInvoice(invoice.id);
+    expect(reopenedInvoice.status).toBe("PARTIALLY_PAID");
+    const arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(40);
+  });
+
   it("stores monetary amounts without binary floating point drift", async () => {
     if (!isDbAvailable) {
       return;

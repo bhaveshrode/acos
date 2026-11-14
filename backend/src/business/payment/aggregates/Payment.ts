@@ -55,6 +55,8 @@ export interface PaymentProps {
   method: PaymentMethod;
   transactionHash: TransactionHash | null;
   gatewayReference: GatewayReference | null;
+  /** The gateway's own payment identifier (e.g. Razorpay `pay_…`), captured at collection. */
+  gatewayPaymentId: string | null;
   walletAddress: WalletAddress | null;
   metadata: PaymentMetadata;
   confirmations: ConfirmationCount;
@@ -93,6 +95,7 @@ export class Payment extends AggregateRoot<PaymentId> {
     optional?: {
       transactionHash?: TransactionHash;
       gatewayReference?: GatewayReference;
+      gatewayPaymentId?: string;
       walletAddress?: WalletAddress;
       metadata?: PaymentMetadata;
       confirmations?: ConfirmationCount;
@@ -127,6 +130,7 @@ export class Payment extends AggregateRoot<PaymentId> {
       method,
       transactionHash: optional?.transactionHash || null,
       gatewayReference: optional?.gatewayReference || null,
+      gatewayPaymentId: optional?.gatewayPaymentId || null,
       walletAddress: optional?.walletAddress || null,
       metadata: optional?.metadata || PaymentMetadata.create().value,
       confirmations: optional?.confirmations || ConfirmationCount.create(0).value,
@@ -151,6 +155,7 @@ export class Payment extends AggregateRoot<PaymentId> {
   public get method(): PaymentMethod { return this.props.method; }
   public get transactionHash(): TransactionHash | null { return this.props.transactionHash; }
   public get gatewayReference(): GatewayReference | null { return this.props.gatewayReference; }
+  public get gatewayPaymentId(): string | null { return this.props.gatewayPaymentId; }
   public get walletAddress(): WalletAddress | null { return this.props.walletAddress; }
   public get metadata(): PaymentMetadata { return this.props.metadata; }
   public get confirmations(): ConfirmationCount { return this.props.confirmations; }
@@ -401,6 +406,23 @@ export class Payment extends AggregateRoot<PaymentId> {
       }
     }
 
+    this.props.updatedAt = new Date();
+    return Result.ok();
+  }
+
+  /**
+   * Records the gateway's own payment identifier once the gateway assigns one.
+   * Idempotent for re-delivered callbacks; a conflicting identifier is refused.
+   */
+  public recordGatewayPaymentId(gatewayPaymentId: string): Result<void> {
+    if (this.props.gatewayPaymentId && this.props.gatewayPaymentId !== gatewayPaymentId) {
+      return Result.fail(
+        ResultError.conflict(
+          `Payment already carries gateway payment id ${this.props.gatewayPaymentId}; refusing to overwrite with ${gatewayPaymentId}.`
+        )
+      );
+    }
+    this.props.gatewayPaymentId = gatewayPaymentId;
     this.props.updatedAt = new Date();
     return Result.ok();
   }

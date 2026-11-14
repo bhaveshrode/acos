@@ -25,6 +25,24 @@ export interface RazorpayPaymentEntity {
   error_description?: string | null;
 }
 
+export interface RazorpayRefundRequest {
+  /** The gateway payment id (`pay_…`) to refund against. */
+  paymentId: string;
+  amountMinor: number;
+  /** Echoed back verbatim on the refund entity and its webhooks. */
+  notes: Record<string, string>;
+}
+
+export interface RazorpayRefundEntity {
+  id: string;
+  amount: number;
+  status: "pending" | "processed" | "failed";
+  payment_id: string;
+  notes?: Record<string, string> | null;
+  error_code?: string | null;
+  error_description?: string | null;
+}
+
 /**
  * The handful of Razorpay API calls this adapter makes. Injecting the client
  * keeps the provider testable without network access or credentials.
@@ -32,6 +50,7 @@ export interface RazorpayPaymentEntity {
 export interface RazorpayClient {
   createPaymentLink(request: RazorpayPaymentLinkRequest): Promise<RazorpayPaymentLink>;
   fetchPayment(paymentId: string): Promise<RazorpayPaymentEntity>;
+  createRefund(request: RazorpayRefundRequest): Promise<RazorpayRefundEntity>;
 }
 
 export class RazorpayRestClient implements RazorpayClient {
@@ -59,6 +78,13 @@ export class RazorpayRestClient implements RazorpayClient {
 
   public async fetchPayment(paymentId: string): Promise<RazorpayPaymentEntity> {
     return this.request<RazorpayPaymentEntity>("GET", `/payments/${encodeURIComponent(paymentId)}`);
+  }
+
+  public async createRefund(request: RazorpayRefundRequest): Promise<RazorpayRefundEntity> {
+    return this.request<RazorpayRefundEntity>("POST", `/payments/${encodeURIComponent(request.paymentId)}/refunds`, {
+      amount: request.amountMinor,
+      notes: request.notes
+    });
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -164,12 +190,47 @@ export class RazorpayPaymentProvider implements IPaymentProvider {
     };
   }
 
+  /**
+   * Returns money through the Razorpay refund API. The gateway processes most
+   * refunds asynchronously, so `pending` maps to PROCESSING and the refund is
+   * only completed when the `refund.processed` webhook arrives.
+   */
   public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
+    if (!input.gatewayPaymentId) {
+      throw new Error(
+        "Razorpay refunds require the gateway payment id captured at collection; this payment has none."
+      );
+    }
+
+    const money = Money.create(input.amount, input.currency);
+    if (money.isFailure) {
+      throw new Error(`RazorpayPaymentProvider rejected the refund amount: ${money.error.message}`);
+    }
+
+    const refund = await this.client.createRefund({
+      paymentId: input.gatewayPaymentId,
+      amountMinor: money.value.minorUnits,
+      notes: {
+        paymentId: input.paymentId,
+        refundRequestId: input.refundRequestId ?? ""
+      }
+    });
+    if (!refund?.id) {
+      throw new Error("Razorpay did not return a refund id.");
+    }
+
+    if (refund.status === "failed") {
+      return {
+        gatewayRefundReference: refund.id,
+        status: "FAILED",
+        errorCode: refund.error_code ?? "REFUND_DECLINED",
+        errorMessage: refund.error_description ?? "Refund declined by gateway"
+      };
+    }
+
     return {
-      gatewayRefundReference: input.paymentId,
-      status: "FAILED",
-      errorCode: "REFUNDS_NOT_SUPPORTED",
-      errorMessage: "Razorpay refunds are not implemented yet; only the sandbox provider can issue refunds."
+      gatewayRefundReference: refund.id,
+      status: refund.status === "processed" ? "SUCCEEDED" : "PROCESSING"
     };
   }
 }

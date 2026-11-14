@@ -11,7 +11,9 @@ import {
   RazorpayPaymentEntity,
   RazorpayPaymentLink,
   RazorpayPaymentLinkRequest,
-  RazorpayPaymentProvider
+  RazorpayPaymentProvider,
+  RazorpayRefundEntity,
+  RazorpayRefundRequest
 } from "../src/integration/RazorpayPaymentProvider.js";
 import { normalizeRazorpayEvent, verifyRazorpaySignature } from "../src/integration/RazorpayWebhook.js";
 import { PaymentController } from "../src/backend/controllers/PaymentController.js";
@@ -22,10 +24,16 @@ const WEBHOOK_SECRET = "whsec_razorpay_unit_test_secret";
 class StubRazorpayClient implements RazorpayClient {
   public readonly linkRequests: RazorpayPaymentLinkRequest[] = [];
   public readonly paymentLookups: string[] = [];
+  public readonly refundRequests: RazorpayRefundRequest[] = [];
   private readonly payments = new Map<string, RazorpayPaymentEntity>();
+  private refundResponse: RazorpayRefundEntity | null = null;
 
   public stubPayment(payment: RazorpayPaymentEntity): void {
     this.payments.set(payment.id, payment);
+  }
+
+  public stubRefund(response: RazorpayRefundEntity): void {
+    this.refundResponse = response;
   }
 
   public async createPaymentLink(request: RazorpayPaymentLinkRequest): Promise<RazorpayPaymentLink> {
@@ -38,6 +46,12 @@ class StubRazorpayClient implements RazorpayClient {
     const payment = this.payments.get(paymentId);
     if (!payment) throw new Error(`No stubbed Razorpay payment named ${paymentId}`);
     return payment;
+  }
+
+  public async createRefund(request: RazorpayRefundRequest): Promise<RazorpayRefundEntity> {
+    this.refundRequests.push(request);
+    if (!this.refundResponse) throw new Error("No stubbed Razorpay refund");
+    return this.refundResponse;
   }
 }
 
@@ -171,6 +185,82 @@ describe("ACOS Merchant — Razorpay Payment Provider", () => {
     expect(client.paymentLookups).toHaveLength(0);
     expect(response.status).toBe("PROCESSING");
   });
+
+  it("creates a refund in minor units echoing the internal ids in notes", async () => {
+    client.stubRefund({ id: "rfnd_test_1", amount: 4000, status: "processed", payment_id: "pay_captured" });
+
+    const response = await provider.refundPayment({
+      paymentId: "payment-1",
+      gatewayPaymentId: "pay_captured",
+      refundRequestId: "req-1",
+      amount: 40,
+      currency: "INR",
+      reason: "Defective item"
+    });
+
+    expect(client.refundRequests).toEqual([
+      {
+        paymentId: "pay_captured",
+        amountMinor: 4000,
+        notes: { paymentId: "payment-1", refundRequestId: "req-1" }
+      }
+    ]);
+    expect(response).toEqual({ gatewayRefundReference: "rfnd_test_1", status: "SUCCEEDED" });
+  });
+
+  it("reports a pending refund as PROCESSING so the webhook completes it", async () => {
+    client.stubRefund({ id: "rfnd_test_2", amount: 4000, status: "pending", payment_id: "pay_captured" });
+
+    const response = await provider.refundPayment({
+      paymentId: "payment-1",
+      gatewayPaymentId: "pay_captured",
+      refundRequestId: "req-1",
+      amount: 40,
+      currency: "INR",
+      reason: "Defective item"
+    });
+
+    expect(response).toEqual({ gatewayRefundReference: "rfnd_test_2", status: "PROCESSING" });
+  });
+
+  it("reports the gateway reason when the refund fails", async () => {
+    client.stubRefund({
+      id: "rfnd_test_3",
+      amount: 4000,
+      status: "failed",
+      payment_id: "pay_captured",
+      error_code: "BAD_REQUEST_ERROR",
+      error_description: "Refund declined by the issuing bank"
+    });
+
+    const response = await provider.refundPayment({
+      paymentId: "payment-1",
+      gatewayPaymentId: "pay_captured",
+      refundRequestId: "req-1",
+      amount: 40,
+      currency: "INR",
+      reason: "Defective item"
+    });
+
+    expect(response).toEqual({
+      gatewayRefundReference: "rfnd_test_3",
+      status: "FAILED",
+      errorCode: "BAD_REQUEST_ERROR",
+      errorMessage: "Refund declined by the issuing bank"
+    });
+  });
+
+  it("refuses to refund without the gateway payment id captured at collection", async () => {
+    await expect(
+      provider.refundPayment({
+        paymentId: "payment-1",
+        amount: 40,
+        currency: "INR",
+        reason: "Defective item"
+      })
+    ).rejects.toThrow(/gateway payment id/);
+    expect(client.refundRequests).toHaveLength(0);
+  });
 });
 
 describe("ACOS Merchant — Razorpay Webhook Verification", () => {
@@ -206,6 +296,7 @@ describe("ACOS Merchant — Razorpay Webhook Verification", () => {
     });
 
     expect(normalized).toEqual({
+      type: "payment",
       handled: true,
       gatewayReference: "plink_test_1",
       gatewayPaymentId: "pay_captured",
@@ -213,12 +304,80 @@ describe("ACOS Merchant — Razorpay Webhook Verification", () => {
     });
   });
 
+  it("maps refund.processed to the internal ids echoed in the refund notes", () => {
+    const normalized = normalizeRazorpayEvent({
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: {
+            id: "rfnd_test_1",
+            payment_id: "pay_captured",
+            notes: { paymentId: "payment-1", refundRequestId: "req-1" }
+          }
+        }
+      }
+    });
+
+    expect(normalized).toEqual({
+      type: "refund",
+      handled: true,
+      paymentId: "payment-1",
+      refundRequestId: "req-1",
+      gatewayRefundReference: "rfnd_test_1",
+      success: true,
+      errorCode: undefined,
+      errorMessage: undefined
+    });
+  });
+
+  it("maps refund.failed to a declined outcome with the gateway reason", () => {
+    const normalized = normalizeRazorpayEvent({
+      event: "refund.failed",
+      payload: {
+        refund: {
+          entity: {
+            id: "rfnd_test_2",
+            payment_id: "pay_captured",
+            error_code: "BAD_REQUEST_ERROR",
+            error_description: "Refund declined by the issuing bank",
+            notes: { paymentId: "payment-1", refundRequestId: "req-2" }
+          }
+        }
+      }
+    });
+
+    expect(normalized).toEqual({
+      type: "refund",
+      handled: true,
+      paymentId: "payment-1",
+      refundRequestId: "req-2",
+      gatewayRefundReference: "rfnd_test_2",
+      success: false,
+      errorCode: "BAD_REQUEST_ERROR",
+      errorMessage: "Refund declined by the issuing bank"
+    });
+  });
+
+  it("acknowledges a refund event without an entity or notes as unmatchable", () => {
+    const normalized = normalizeRazorpayEvent({
+      event: "refund.processed",
+      payload: { refund: { entity: { id: "rfnd_test_3" } } }
+    });
+
+    expect(normalized.type).toBe("refund");
+    expect(normalized.handled).toBe(true);
+    if (normalized.type === "refund") {
+      expect(normalized.paymentId).toBeUndefined();
+      expect(normalized.refundRequestId).toBeUndefined();
+    }
+  });
+
   it("acknowledges events that are not a paid link without handling them", () => {
-    expect(normalizeRazorpayEvent({ event: "payment.failed", payload: {} })).toEqual({ handled: false });
-    expect(normalizeRazorpayEvent({ event: "payment_link.cancelled", payload: {} })).toEqual({ handled: false });
-    expect(normalizeRazorpayEvent({ event: "payment_link.expired", payload: {} })).toEqual({ handled: false });
-    expect(normalizeRazorpayEvent({})).toEqual({ handled: false });
-    expect(normalizeRazorpayEvent({ event: "payment_link.paid", payload: {} })).toEqual({ handled: false });
+    expect(normalizeRazorpayEvent({ event: "payment.failed", payload: {} })).toEqual({ type: "payment", handled: false });
+    expect(normalizeRazorpayEvent({ event: "payment_link.cancelled", payload: {} })).toEqual({ type: "payment", handled: false });
+    expect(normalizeRazorpayEvent({ event: "payment_link.expired", payload: {} })).toEqual({ type: "payment", handled: false });
+    expect(normalizeRazorpayEvent({})).toEqual({ type: "payment", handled: false });
+    expect(normalizeRazorpayEvent({ event: "payment_link.paid", payload: {} })).toEqual({ type: "payment", handled: false });
   });
 });
 
@@ -233,15 +392,21 @@ describe("ACOS Merchant — Razorpay Webhook Controller", () => {
   const rawBody = JSON.stringify(webhookBody);
   const signature = crypto.createHmac("sha256", WEBHOOK_SECRET).update(rawBody).digest("hex");
 
-  let calls: any[][];
+  let paymentCalls: any[][];
+  let refundCalls: any[][];
   let controller: PaymentController;
 
   beforeEach(() => {
-    calls = [];
+    paymentCalls = [];
+    refundCalls = [];
     const boundary = {
       processPaymentWebhook: async (...args: any[]) => {
-        calls.push(args);
+        paymentCalls.push(args);
         return { id: "payment-1", status: "CONFIRMED" };
+      },
+      processRefundWebhook: async (...args: any[]) => {
+        refundCalls.push(args);
+        return { id: "payment-1", status: "REFUNDED" };
       }
     };
     const config = {
@@ -262,7 +427,46 @@ describe("ACOS Merchant — Razorpay Webhook Controller", () => {
     );
 
     expect(response?.status).toBe(200);
-    expect(calls[0]).toEqual(["plink_test_1", true, undefined, undefined, "pay_captured"]);
+    expect(paymentCalls[0]).toEqual(["plink_test_1", true, undefined, undefined, "pay_captured"]);
+    expect(refundCalls).toHaveLength(0);
+  });
+
+  it("settles an asynchronous refund through the notes echoed by the gateway", async () => {
+    const body = {
+      event: "refund.processed",
+      payload: {
+        refund: {
+          entity: {
+            id: "rfnd_test_1",
+            payment_id: "pay_captured",
+            notes: { paymentId: "payment-1", refundRequestId: "req-1" }
+          }
+        }
+      }
+    };
+    const raw = JSON.stringify(body);
+    const sig = crypto.createHmac("sha256", WEBHOOK_SECRET).update(raw).digest("hex");
+
+    const response = await controller.handle("POST", "/payments/webhook", body, { "x-razorpay-signature": sig }, raw);
+
+    expect(response?.status).toBe(200);
+    expect(refundCalls[0]).toEqual(["payment-1", "req-1", true, undefined, undefined]);
+    expect(paymentCalls).toHaveLength(0);
+  });
+
+  it("acknowledges a refund webhook whose notes cannot be matched, without touching the boundary", async () => {
+    const body = {
+      event: "refund.processed",
+      payload: { refund: { entity: { id: "rfnd_test_9", payment_id: "pay_captured" } } }
+    };
+    const raw = JSON.stringify(body);
+    const sig = crypto.createHmac("sha256", WEBHOOK_SECRET).update(raw).digest("hex");
+
+    const response = await controller.handle("POST", "/payments/webhook", body, { "x-razorpay-signature": sig }, raw);
+
+    expect(response).toEqual({ status: 200, body: { status: "ignored" } });
+    expect(refundCalls).toHaveLength(0);
+    expect(paymentCalls).toHaveLength(0);
   });
 
   it("rejects an invalid signature without touching the boundary", async () => {
@@ -277,7 +481,7 @@ describe("ACOS Merchant — Razorpay Webhook Controller", () => {
     );
 
     expect(response?.status).toBe(401);
-    expect(calls).toHaveLength(0);
+    expect(paymentCalls).toHaveLength(0);
   });
 
   it("acknowledges other event types with 200 so Razorpay stops retrying", async () => {
@@ -294,7 +498,7 @@ describe("ACOS Merchant — Razorpay Webhook Controller", () => {
     );
 
     expect(response).toEqual({ status: 200, body: { status: "ignored" } });
-    expect(calls).toHaveLength(0);
+    expect(paymentCalls).toHaveLength(0);
   });
 });
 
