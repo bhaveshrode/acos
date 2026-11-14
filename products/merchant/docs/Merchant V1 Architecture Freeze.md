@@ -107,7 +107,7 @@ To guarantee at-least-once domain event delivery and avoid dual-write consistenc
 ---
 
 ## 10. Test Baseline
-The release criteria baseline is strictly frozen as follows:
+The release criteria baseline is strictly frozen as follows. Spec files run one at a time (`sequence.fileParallelism: false`): the PostgreSQL-backed suites share one database and one outbox table, and parallel workers could claim each other's event rows and deliver them to the wrong in-process bus, losing cache invalidations nondeterministically.
 
 | Test Suite Category | Test Count | Environment |
 | :--- | :--- | :--- |
