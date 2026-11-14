@@ -120,7 +120,7 @@ The release criteria baseline is strictly frozen as follows. Spec files run one 
 | **Payment Provider Tests** | 26 | Razorpay adapter (links, refunds, signature verification, webhook dispatch, failed initiation) against a stubbed gateway; no network |
 | **Razorpay Live Smoke** | 3 | Skipped in the gate. Manual dispatch (`RAZORPAY_SMOKE=1`, test-mode keys) creates and abandons a ₹1 Payment Link against the real API |
 | **Razorpay Inbound E2E** | 2 | Skipped in the gate. Manual dispatch creates the link in one step and publishes the pay link and webhook URL to the job summary, then a second step in a fresh process waits for a human to pay a ₹1 test-mode link through a public tunnel and asserts webhook → CONFIRMED → PAID. The paid round trip was verified once on 2026-11-13 |
-| **Total** | **118** | **All tests must pass cleanly (`118/118 PASS`)** |
+| **Total** | **122** | **All tests must pass cleanly (`122/122 PASS`)** |
 
 ---
 
