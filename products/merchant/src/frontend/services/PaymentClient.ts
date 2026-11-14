@@ -44,6 +44,25 @@ export class PaymentClient extends BaseClient {
     return response.body;
   }
 
+  public async refundPayment(id: string, amount: number, reason: string): Promise<any> {
+    this.ctx.logger.info("Frontend: Requesting payment refund...", { id, amount, reason });
+    const headers = this.ctx.getHeaders();
+    const response = await this.ctx.backend.handleRequest(
+      "POST",
+      `/business/payments/${id}/refund`,
+      { amount, reason },
+      headers
+    );
+
+    if (response.status !== 200) {
+      this.ctx.logger.warn("Frontend: Refund failed on backend", response.body);
+      throw new Error(response.body.message || response.body.error || "Refund Failed");
+    }
+
+    this.ctx.logger.info("Frontend: Refund resolved successfully.");
+    return response.body;
+  }
+
   public async getPayment(id: string): Promise<any> {
     this.ctx.logger.info("Frontend: Fetching payment details...", { id });
     const headers = this.ctx.getHeaders();

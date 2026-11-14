@@ -1,5 +1,5 @@
 import { Money, PaymentMethodType } from "acos-backend";
-import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentProvider.js";
+import { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "./PaymentProvider.js";
 
 export const RAZORPAY_CURRENCY = "INR";
 const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
@@ -161,6 +161,15 @@ export class RazorpayPaymentProvider implements IPaymentProvider {
     return {
       gatewayReference: input.gatewayReference,
       status: "PROCESSING"
+    };
+  }
+
+  public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
+    return {
+      gatewayRefundReference: input.paymentId,
+      status: "FAILED",
+      errorCode: "REFUNDS_NOT_SUPPORTED",
+      errorMessage: "Razorpay refunds are not implemented yet; only the sandbox provider can issue refunds."
     };
   }
 }

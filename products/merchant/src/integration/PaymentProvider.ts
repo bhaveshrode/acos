@@ -26,6 +26,26 @@ export interface PaymentCompletion {
   errorMessage?: string;
 }
 
+/**
+ * Input for returning money on a confirmed payment. `paymentId` is the
+ * internal aggregate id; `gatewayPaymentId` is the gateway's own payment
+ * identifier when one was captured during collection.
+ */
+export interface RefundRequestInput {
+  paymentId: string;
+  gatewayPaymentId?: string;
+  amount: number;
+  currency: string;
+  reason: string;
+}
+
+export interface RefundResponse {
+  gatewayRefundReference: string;
+  status: "PROCESSING" | "SUCCEEDED" | "FAILED";
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 export interface IPaymentProvider {
   getName(): string;
   /**
@@ -35,4 +55,5 @@ export interface IPaymentProvider {
   getMethodType(): PaymentMethodType;
   initiatePayment(paymentId: string, amount: number, currency: string): Promise<PaymentResponse>;
   completePayment(input: PaymentCompletion): Promise<PaymentResponse>;
+  refundPayment(input: RefundRequestInput): Promise<RefundResponse>;
 }

@@ -1,5 +1,5 @@
 import { PaymentMethodType } from "acos-backend";
-import { IPaymentProvider, PaymentCompletion, PaymentResponse } from "./PaymentProvider.js";
+import { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "./PaymentProvider.js";
 
 /**
  * Concrete implementation of IPaymentProvider simulating payment logic.
@@ -42,5 +42,12 @@ export class SandboxPaymentProvider implements IPaymentProvider {
         errorMessage: "Simulated sandbox transaction declined due to insufficient customer balances."
       };
     }
+  }
+
+  public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
+    return {
+      gatewayRefundReference: `sandbox-refund-${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
+      status: "SUCCEEDED"
+    };
   }
 }

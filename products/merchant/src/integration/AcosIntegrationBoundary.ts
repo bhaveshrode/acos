@@ -52,7 +52,12 @@ import {
   openReceivableAccount,
   registerInvoiceObligation,
   applyReceivablePayment,
+  applyRefund,
   getReceivableCreditBalance,
+  requestRefund,
+  completeRefund,
+  recordRefund,
+  RefundStatus,
   IEventBus
 } from "acos-backend";
 import { JwtTokenProvider } from "../adapters/security/JwtTokenProvider.js";
@@ -1427,6 +1432,167 @@ export class AcosIntegrationBoundary {
         }
         this.logger.info("processPaymentWebhook: Payment marked as FAILED.");
       }
+
+      const saveRes = await this.paymentRepository.save(payment);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
+      }
+
+      const events = payment.domainEvents;
+      payment.clearDomainEvents();
+      await this.eventBus.publishAll(events);
+
+      return payment;
+    });
+
+    const mapper = new PaymentMapper();
+    return mapper.map(payment);
+  }
+
+  /**
+   * Returns money on a confirmed payment. The gateway refund executes outside
+   * the unit of work; the ledger reversal — refund request, receivable
+   * re-opening, and invoice status — commits as one transaction.
+   */
+  public async refundPayment(userId: string, paymentId: string, amount: number, reason: string): Promise<any> {
+    this.logger.info("refundPayment: Processing refund request...", { userId, paymentId, amount });
+
+    const existingRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+    if (existingRes.isFailure) {
+      throw new Error(`Payment with ID ${paymentId} not found.`);
+    }
+    const existing = existingRes.value;
+
+    await this.verifyBusinessOwnership(userId, existing.organizationId.value);
+
+    if (typeof amount !== "number" || amount <= 0) {
+      throw new Error("Refund amount must be a positive number.");
+    }
+
+    // Gateway I/O stays outside the unit of work so no DB transaction is held
+    // open across an external call.
+    const providerResponse = await this.paymentProvider.refundPayment({
+      paymentId,
+      amount,
+      currency: existing.amount.currency,
+      reason
+    });
+    if (providerResponse.status !== "SUCCEEDED") {
+      throw new Error(providerResponse.errorMessage || "Gateway refused the refund.");
+    }
+
+    const payment = await this.withinTransaction(async () => {
+      const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      if (reloadRes.isFailure) {
+        throw new Error(`Payment with ID ${paymentId} not found.`);
+      }
+      const payment = reloadRes.value;
+
+      const refundId = new UniqueEntityID();
+      const refundMoney = Money.create(amount, payment.amount.currency).value;
+
+      const requestRes = requestRefund(payment, refundId, refundMoney, reason);
+      if (requestRes.isFailure) {
+        throw new Error(requestRes.error.message);
+      }
+
+      const completeRes = completeRefund(payment, refundId);
+      if (completeRes.isFailure) {
+        throw new Error(completeRes.error.message);
+      }
+      this.logger.info("refundPayment: Refund marked as COMPLETED.", { paymentId, refundId: refundId.value });
+
+      let remainingRefund = amount;
+      for (const allocation of payment.allocations) {
+        // Refund requests are payment-level; distribute the refunded value
+        // across allocations (the persisted merchant payment has one).
+        const allocationRefund = Math.min(remainingRefund, allocation.allocatedAmount.amount);
+        if (allocationRefund <= 0) break;
+        remainingRefund -= allocationRefund;
+        const allocationRefundMoney = Money.create(allocationRefund, payment.amount.currency).value;
+
+        // 1. Load target Invoice
+        const invoiceRes = await this.invoiceRepository.findById(allocation.invoiceId);
+        if (invoiceRes.isFailure) {
+          throw new Error(`Refund reversal target not found: Invoice ${allocation.invoiceId.value} not found.`);
+        }
+        const invoice = invoiceRes.value;
+
+        // 2. Tenant Boundary Isolation Check
+        if (invoice.organizationId.value !== payment.organizationId.value) {
+          throw new Error("Access Denied: Cross-tenant boundary breach. Confirmed payment cannot be reconciled against another merchant's invoice.");
+        }
+
+        // 3. Currency Validation
+        if (invoice.currency !== allocation.allocatedAmount.currency) {
+          throw new Error(`Reconciliation Mismatch: Invoice currency ${invoice.currency} does not match allocation currency ${allocation.allocatedAmount.currency}.`);
+        }
+
+        // 4. Accounts Receivable Reversal
+        let ar: AccountsReceivable;
+        const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
+        if (arRes.isSuccess) {
+          ar = arRes.value;
+        } else {
+          const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
+          if (openRes.isFailure) {
+            throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+          }
+          ar = openRes.value;
+        }
+
+        const applyRes = applyRefund(ar, invoice.id, allocationRefundMoney);
+        if (applyRes.isFailure) {
+          throw new Error(`Accounts Receivable refund rejected: ${applyRes.error.message}`);
+        }
+        const arSaveRes = await this.accountsReceivableRepository.save(ar);
+        if (arSaveRes.isFailure) {
+          throw new Error(`Failed to persist receivable ledger: ${arSaveRes.error.message}`);
+        }
+
+        // 5. Update Invoice Obligation Status from cumulative net payments
+        const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
+        let cumulativePaid = 0;
+        let cumulativeRefunded = 0;
+        if (allPaymentsRes.isSuccess) {
+          for (const p of allPaymentsRes.value) {
+            // The current payment is read from the row written by the
+            // webhook, so its just-completed refund only exists in memory.
+            const isCurrent = p.id.equals(payment.id);
+            // Money was collected on confirmed and fully-refunded payments alike
+            if (!isCurrent && p.status !== "CONFIRMED" && p.status !== "REFUNDED") continue;
+            for (const a of p.allocations) {
+              if (a.invoiceId.equals(invoice.id)) {
+                cumulativePaid += a.allocatedAmount.amount;
+              }
+            }
+            const refunds = isCurrent ? payment.refundRequests : p.refundRequests;
+            for (const r of refunds) {
+              if (r.status === RefundStatus.COMPLETED) {
+                cumulativeRefunded += r.amount.amount;
+              }
+            }
+          }
+        }
+
+        const netPaid = cumulativePaid - cumulativeRefunded;
+        const recordRes = recordRefund(invoice, allocationRefundMoney, Money.create(netPaid, invoice.currency).value);
+        if (recordRes.isFailure) {
+          throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
+        }
+        const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+        if (invoiceSaveRes.isFailure) {
+          throw new Error(`Failed to save reconciled invoice: ${invoiceSaveRes.error.message}`);
+        }
+
+        // Publish ACOS invoice refund events (e.g. InvoiceRefunded)
+        if (invoice.domainEvents.length > 0) {
+          this.logger.info(`Publishing ACOS invoice refund events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
+          await this.eventBus.publishAll(invoice.domainEvents);
+          invoice.clearDomainEvents();
+        }
+      }
+      this.logger.info("refundPayment: Reversal reconciliation completed successfully.");
 
       const saveRes = await this.paymentRepository.save(payment);
       if (saveRes.isFailure) {

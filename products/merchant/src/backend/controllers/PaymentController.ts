@@ -47,6 +47,43 @@ export class PaymentController extends BaseController {
       }
     }
 
+    if (method === "POST" && path.startsWith("/business/payments/") && path.endsWith("/refund")) {
+      const token = this.extractBearerToken(headers);
+      if (!token) {
+        return {
+          status: 401,
+          body: { error: "Unauthorized: Missing session token." }
+        };
+      }
+
+      let userProfile;
+      try {
+        userProfile = await this.acosBoundary.me(token);
+      } catch (err: any) {
+        return {
+          status: 401,
+          body: { error: "Unauthorized", message: err.message }
+        };
+      }
+
+      const paymentId = path.substring("/business/payments/".length, path.length - "/refund".length);
+      try {
+        const payment = await this.acosBoundary.refundPayment(userProfile.id, paymentId, payload?.amount, payload?.reason);
+        return {
+          status: 200,
+          body: payment
+        };
+      } catch (err: any) {
+        this.logger.warn("Refund rejected by boundary", { paymentId, error: err.message });
+        const isAccessDenied = err.message.includes("Access Denied");
+        const isNotFound = err.message.includes("not found");
+        return {
+          status: isAccessDenied ? 403 : (isNotFound ? 404 : 400),
+          body: { error: isAccessDenied ? "Forbidden" : "Refund Failed", message: err.message }
+        };
+      }
+    }
+
     if (method === "POST" && path === "/payments/webhook") {
       if (this.config.paymentProvider === "razorpay") {
         return this.handleRazorpayWebhook(payload, headers, rawBody);

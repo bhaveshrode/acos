@@ -153,6 +153,10 @@ export class MerchantFrontend {
     return this.paymentClient.simulateWebhook(gatewayReference, success, errorCode, errorMessage);
   }
 
+  public refundPayment(id: string, amount: number, reason: string): Promise<any> {
+    return this.paymentClient.refundPayment(id, amount, reason);
+  }
+
   public getPayment(id: string): Promise<any> {
     return this.paymentClient.getPayment(id);
   }

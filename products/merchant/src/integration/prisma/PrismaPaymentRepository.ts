@@ -10,6 +10,7 @@ import {
   OrganizationId as OrgId,
   InvoiceId as InvId
 } from "acos-backend";
+import { PaymentSnapshot } from "../../adapters/persistence/snapshots/PaymentSnapshot.js";
 import { PaymentSerializer } from "../../adapters/persistence/serializers/PaymentSerializer.js";
 import { PaymentHydrator } from "../../adapters/persistence/hydrators/PaymentHydrator.js";
 import { TransactionScope } from "../../adapters/transactions/scopes/TransactionScope.js";
@@ -22,41 +23,56 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     return TransactionScope.current ?? this.prisma;
   }
 
+  private async loadRefunds(paymentId: string): Promise<any[]> {
+    return this.db.refund.findMany({ where: { paymentId } });
+  }
+
+  /** Rebuilds the aggregate snapshot from the flat payment row and its refund rows. */
+  private buildSnapshot(row: any, refundRows: any[]): PaymentSnapshot {
+    return {
+      id: row.id,
+      organizationId: row.organizationId,
+      customerId: "",
+      reference: row.reference,
+      amount: row.amount.toNumber(),
+      currency: row.currency,
+      status: row.status,
+      methodType: row.method,
+      methodDetails: "{}",
+      transactionHash: null,
+      gatewayReference: row.gatewayReference,
+      walletAddress: null,
+      metadata: {},
+      confirmations: 1,
+      exchangeRate: null,
+      allocations: [{
+        id: row.id,
+        invoiceId: row.invoiceId,
+        amount: row.amount.toNumber(),
+        currency: row.currency,
+        status: row.status
+      }],
+      attempts: [],
+      refundRequests: refundRows.map((refund) => ({
+        id: refund.id,
+        amount: refund.amount.toNumber(),
+        currency: refund.currency,
+        status: refund.status,
+        reason: refund.reason,
+        requestedAt: refund.createdAt
+      })),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    } as PaymentSnapshot;
+  }
+
   public async findById(id: PaymentId): Promise<Result<Payment>> {
     try {
       const row = await this.db.payment.findUnique({ where: { id: id.value } });
       if (!row) return Result.fail(ResultError.notFound(`Payment with ID ${id.value} not found.`));
 
-      const snapshot = {
-        id: row.id,
-        organizationId: row.organizationId,
-        customerId: "",
-        reference: row.reference,
-        amount: row.amount.toNumber(),
-        currency: row.currency,
-        status: row.status,
-        methodType: row.method,
-        methodDetails: "{}",
-        transactionHash: null,
-        gatewayReference: row.gatewayReference,
-        walletAddress: null,
-        metadata: {},
-        confirmations: 1,
-        exchangeRate: null,
-        allocations: [{
-          id: row.id,
-          invoiceId: row.invoiceId,
-          amount: row.amount.toNumber(),
-          currency: row.currency,
-          status: row.status
-        }],
-        attempts: [],
-        refundRequests: [],
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt
-      };
-
-      return Result.ok(PaymentHydrator.hydrate(snapshot as any));
+      const refundRows = await this.loadRefunds(row.id);
+      return Result.ok(PaymentHydrator.hydrate(this.buildSnapshot(row, refundRows)));
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
     }
@@ -69,36 +85,8 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       });
       if (!row) return Result.fail(ResultError.notFound(`Payment reference not found.`));
 
-      const snapshot = {
-        id: row.id,
-        organizationId: row.organizationId,
-        customerId: "",
-        reference: row.reference,
-        amount: row.amount.toNumber(),
-        currency: row.currency,
-        status: row.status,
-        methodType: row.method,
-        methodDetails: "{}",
-        transactionHash: null,
-        gatewayReference: row.gatewayReference,
-        walletAddress: null,
-        metadata: {},
-        confirmations: 1,
-        exchangeRate: null,
-        allocations: [{
-          id: row.id,
-          invoiceId: row.invoiceId,
-          amount: row.amount.toNumber(),
-          currency: row.currency,
-          status: row.status
-        }],
-        attempts: [],
-        refundRequests: [],
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt
-      };
-
-      return Result.ok(PaymentHydrator.hydrate(snapshot as any));
+      const refundRows = await this.loadRefunds(row.id);
+      return Result.ok(PaymentHydrator.hydrate(this.buildSnapshot(row, refundRows)));
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
     }
@@ -111,36 +99,8 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       });
       if (!row) return Result.fail(ResultError.notFound(`Payment with gateway reference ${ref.value} not found.`));
 
-      const snapshot = {
-        id: row.id,
-        organizationId: row.organizationId,
-        customerId: "",
-        reference: row.reference,
-        amount: row.amount.toNumber(),
-        currency: row.currency,
-        status: row.status,
-        methodType: row.method,
-        methodDetails: "{}",
-        transactionHash: null,
-        gatewayReference: row.gatewayReference,
-        walletAddress: null,
-        metadata: {},
-        confirmations: 1,
-        exchangeRate: null,
-        allocations: [{
-          id: row.id,
-          invoiceId: row.invoiceId,
-          amount: row.amount.toNumber(),
-          currency: row.currency,
-          status: row.status
-        }],
-        attempts: [],
-        refundRequests: [],
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt
-      };
-
-      return Result.ok(PaymentHydrator.hydrate(snapshot as any));
+      const refundRows = await this.loadRefunds(row.id);
+      return Result.ok(PaymentHydrator.hydrate(this.buildSnapshot(row, refundRows)));
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
     }
@@ -151,37 +111,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       const rows = await this.db.payment.findMany({
         where: { organizationId: orgId.value, invoiceId: invoiceId.value }
       });
-      const list = rows.map((row: any) => {
-        const snapshot = {
-          id: row.id,
-          organizationId: row.organizationId,
-          customerId: "",
-          reference: row.reference,
-          amount: row.amount.toNumber(),
-          currency: row.currency,
-          status: row.status,
-          methodType: row.method,
-          methodDetails: "{}",
-          transactionHash: null,
-          gatewayReference: row.gatewayReference,
-          walletAddress: null,
-          metadata: {},
-          confirmations: 1,
-          exchangeRate: null,
-          allocations: [{
-            id: row.id,
-            invoiceId: row.invoiceId,
-            amount: row.amount.toNumber(),
-            currency: row.currency,
-            status: row.status
-          }],
-          attempts: [],
-          refundRequests: [],
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt
-        };
-        return PaymentHydrator.hydrate(snapshot as any);
-      });
+      const list: Payment[] = [];
+      for (const row of rows) {
+        const refundRows = await this.loadRefunds(row.id);
+        list.push(PaymentHydrator.hydrate(this.buildSnapshot(row, refundRows)));
+      }
       return Result.ok(list);
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
@@ -229,6 +163,29 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           gatewayReference
         }
       });
+
+      for (const refund of snapshot.refundRequests) {
+        await this.db.refund.upsert({
+          where: { id: refund.id },
+          create: {
+            id: refund.id,
+            paymentId: snapshot.id,
+            organizationId: snapshot.organizationId,
+            invoiceId,
+            amount: refund.amount,
+            currency: refund.currency,
+            status: refund.status,
+            reason: refund.reason
+          },
+          update: {
+            amount: refund.amount,
+            currency: refund.currency,
+            status: refund.status,
+            reason: refund.reason
+          }
+        });
+      }
+
       return Result.ok();
     } catch (err: any) {
       return Result.fail(ResultError.unexpected(err.message));
