@@ -2,6 +2,7 @@ import type { IEventBus } from "acos-backend";
 import { InvoicePaidHandler } from "../handlers/InvoicePaidHandler.js";
 import { InvoicePartiallyPaidHandler } from "../handlers/InvoicePartiallyPaidHandler.js";
 import { InvoiceOverpaidHandler } from "../handlers/InvoiceOverpaidHandler.js";
+import { InvoiceRefundedHandler } from "../handlers/InvoiceRefundedHandler.js";
 
 /**
  * Event Consumer registering event handlers with the ACOS Event Bus.
@@ -10,6 +11,7 @@ export class MerchantEventConsumer {
   private readonly invoicePaidHandler: InvoicePaidHandler;
   private readonly invoicePartiallyPaidHandler: InvoicePartiallyPaidHandler;
   private readonly invoiceOverpaidHandler: InvoiceOverpaidHandler;
+  private readonly invoiceRefundedHandler: InvoiceRefundedHandler;
 
   constructor(
     private readonly eventBus: IEventBus,
@@ -18,6 +20,7 @@ export class MerchantEventConsumer {
     this.invoicePaidHandler = new InvoicePaidHandler(invalidateCache);
     this.invoicePartiallyPaidHandler = new InvoicePartiallyPaidHandler(invalidateCache);
     this.invoiceOverpaidHandler = new InvoiceOverpaidHandler(invalidateCache);
+    this.invoiceRefundedHandler = new InvoiceRefundedHandler(invalidateCache);
   }
 
   /**
@@ -27,6 +30,7 @@ export class MerchantEventConsumer {
     this.eventBus.subscribe("InvoicePaid", this.invoicePaidHandler);
     this.eventBus.subscribe("InvoicePartiallyPaid", this.invoicePartiallyPaidHandler);
     this.eventBus.subscribe("InvoiceOverpaid", this.invoiceOverpaidHandler);
+    this.eventBus.subscribe("InvoiceRefunded", this.invoiceRefundedHandler);
   }
 
   /**
@@ -36,5 +40,6 @@ export class MerchantEventConsumer {
     this.eventBus.unsubscribe("InvoicePaid", this.invoicePaidHandler);
     this.eventBus.unsubscribe("InvoicePartiallyPaid", this.invoicePartiallyPaidHandler);
     this.eventBus.unsubscribe("InvoiceOverpaid", this.invoiceOverpaidHandler);
+    this.eventBus.unsubscribe("InvoiceRefunded", this.invoiceRefundedHandler);
   }
 }

@@ -763,6 +763,73 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(arRes.value.getCreditBalance("USD").amount).toBe(100); // 600 - 500 = 100 excess credit
     });
 
+    it("should refund a confirmed payment fully (PAID -> ISSUED, payment REFUNDED)", async () => {
+      const payment = await frontend.collectPayment(bobInvoice.id);
+      const queryRes = await boundary.paymentRepository.findById(
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
+      );
+      await frontend.simulateWebhook(queryRes.value.gatewayReference!.value, true);
+
+      const invoice = await frontend.getInvoice(bobInvoice.id);
+      expect(invoice.status).toBe("PAID");
+
+      const refunded = await frontend.refundPayment(payment.id, 500, "Order returned");
+      expect(refunded.status).toBe("REFUNDED");
+
+      const refundedInvoice = await frontend.getInvoice(bobInvoice.id);
+      expect(refundedInvoice.status).toBe("ISSUED");
+
+      // The receivable is re-opened to the full obligation
+      const arRes = await boundary.accountsReceivableRepository.findByCustomer(
+        await import("acos-backend").then(m => m.OrganizationId.from(invoice.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoice.customerId))
+      );
+      expect(arRes.value.getOutstandingBalance("USD").amount).toBe(500);
+    });
+
+    it("should refund a confirmed payment partially (PAID -> PARTIALLY_PAID, payment CONFIRMED)", async () => {
+      const payment = await frontend.collectPayment(bobInvoice.id);
+      const queryRes = await boundary.paymentRepository.findById(
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
+      );
+      await frontend.simulateWebhook(queryRes.value.gatewayReference!.value, true);
+
+      const refunded = await frontend.refundPayment(payment.id, 200, "Partial return");
+      expect(refunded.status).toBe("CONFIRMED");
+
+      const invoice = await frontend.getInvoice(bobInvoice.id);
+      expect(invoice.status).toBe("PARTIALLY_PAID");
+
+      const arRes = await boundary.accountsReceivableRepository.findByCustomer(
+        await import("acos-backend").then(m => m.OrganizationId.from(invoice.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(invoice.customerId))
+      );
+      expect(arRes.value.getOutstandingBalance("USD").amount).toBe(200);
+
+      // The remaining value can still be refunded
+      const rest = await frontend.refundPayment(payment.id, 300, "Remaining return");
+      expect(rest.status).toBe("REFUNDED");
+      const finalInvoice = await frontend.getInvoice(bobInvoice.id);
+      expect(finalInvoice.status).toBe("ISSUED");
+    });
+
+    it("should reject refunds on unconfirmed payments and across tenant boundaries", async () => {
+      // Unconfirmed payment cannot be refunded
+      const pendingPayment = await frontend.collectPayment(bobInvoice.id);
+      await expect(
+        frontend.refundPayment(pendingPayment.id, 100, "Too early")
+      ).rejects.toThrow(/confirmed payments/i);
+
+      // Another merchant cannot refund Bob's payment
+      frontend.clearSessionToken();
+      await frontend.signUp("dave@example.com", password, "Dave Merchant");
+      await frontend.login("dave@example.com", password);
+      await frontend.onboardBusiness("Dave Shop", "dave-shop", "USD");
+      await expect(
+        frontend.refundPayment(pendingPayment.id, 100, "Not mine")
+      ).rejects.toThrow(/Access Denied|Forbidden/);
+    });
+
     it("should reject reconciliation when currency mismatch is detected", async () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       
