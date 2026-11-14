@@ -75,6 +75,7 @@ export class PaymentDeserializer {
       ).value,
       transactionHash: snapshot.transactionHash ? TransactionHash.create(snapshot.transactionHash).value : null,
       gatewayReference: snapshot.gatewayReference ? GatewayReference.create(snapshot.gatewayReference).value : null,
+      gatewayPaymentId: snapshot.gatewayPaymentId ?? null,
       walletAddress: snapshot.walletAddress ? WalletAddress.create(snapshot.walletAddress).value : null,
       metadata: PaymentMetadata.create(snapshot.metadata).value,
       confirmations: ConfirmationCount.create(snapshot.confirmations).value,

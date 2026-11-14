@@ -18,6 +18,7 @@ export class PaymentSerializer {
       methodDetails: aggregate.method.details,
       transactionHash: aggregate.transactionHash ? aggregate.transactionHash.value : null,
       gatewayReference: aggregate.gatewayReference ? aggregate.gatewayReference.value : null,
+      gatewayPaymentId: aggregate.gatewayPaymentId,
       walletAddress: aggregate.walletAddress ? aggregate.walletAddress.value : null,
       metadata: aggregate.metadata.value,
       confirmations: aggregate.confirmations.value,

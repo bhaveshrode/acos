@@ -257,9 +257,10 @@ export class PaymentController extends BaseController {
   }
 
   /**
-   * Razorpay delivers signed events for every endpoint subscription. Only the
-   * paid-link event settles a payment; everything else is acknowledged so
-   * Razorpay stops retrying without touching the ledger.
+   * Razorpay delivers signed events for every endpoint subscription. The
+   * paid-link event settles a payment, refund events settle asynchronous
+   * refunds, and everything else is acknowledged so Razorpay stops retrying
+   * without touching the ledger.
    */
   private async handleRazorpayWebhook(
     payload: any,
@@ -282,6 +283,44 @@ export class PaymentController extends BaseController {
     }
 
     const normalized = normalizeRazorpayEvent(payload);
+
+    if (normalized.type === "refund") {
+      if (!normalized.paymentId || !normalized.refundRequestId) {
+        this.logger.warn("Razorpay refund webhook missing internal ids; acknowledged without action", {
+          event: payload?.event,
+          gatewayRefundReference: normalized.gatewayRefundReference
+        });
+        return {
+          status: 200,
+          body: { status: "ignored" }
+        };
+      }
+
+      try {
+        const payment = await this.acosBoundary.processRefundWebhook(
+          normalized.paymentId,
+          normalized.refundRequestId,
+          normalized.success,
+          normalized.errorCode,
+          normalized.errorMessage
+        );
+        return {
+          status: 200,
+          body: payment
+        };
+      } catch (err: any) {
+        this.logger.error("Razorpay refund webhook failed to process", err);
+        const isNotFound = err.message.includes("No payment aggregate") || err.message.includes("not found");
+        return {
+          status: isNotFound ? 404 : 400,
+          body: {
+            error: isNotFound ? "Not Found" : "Webhook Processing Failed",
+            message: err.message
+          }
+        };
+      }
+    }
+
     if (!normalized.handled || !normalized.gatewayReference) {
       this.logger.info("Razorpay webhook acknowledged without payment action", { event: payload?.event });
       return {

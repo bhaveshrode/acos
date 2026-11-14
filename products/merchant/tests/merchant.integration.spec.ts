@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
-import { Logger, LogEntry } from "acos-backend";
+import { Logger, LogEntry, PaymentMethodType } from "acos-backend";
 import type { LogWriter } from "acos-backend";
+import type { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "../src/integration/PaymentProvider.js";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
@@ -912,6 +913,167 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       await expect(
         frontend.simulateWebhook(bobGatewayRef, true)
       ).rejects.toThrow(/Access Denied|tenant/i);
+    });
+  });
+
+  describe("Asynchronous Refund Settlement (Gateway Webhook)", () => {
+    const password = "PasswordPlaintext123!";
+
+    class DeferredRefundProvider implements IPaymentProvider {
+      public readonly refunds: RefundRequestInput[] = [];
+      public refundStatus: "PROCESSING" | "SUCCEEDED" | "FAILED" = "PROCESSING";
+
+      public get lastRefundRequestId(): string | undefined {
+        return this.refunds[this.refunds.length - 1]?.refundRequestId;
+      }
+
+      public getName(): string {
+        return "DEFERRED_REFUND_PROVIDER";
+      }
+
+      public getMethodType(): PaymentMethodType {
+        return PaymentMethodType.RAZORPAY;
+      }
+
+      public async initiatePayment(paymentId: string): Promise<PaymentResponse> {
+        return { gatewayReference: `plink_${paymentId}`, status: "PROCESSING" };
+      }
+
+      public async completePayment(input: PaymentCompletion): Promise<PaymentResponse> {
+        if (input.success) {
+          return { gatewayReference: input.gatewayReference, status: "SUCCEEDED", transactionHash: input.gatewayPaymentId ?? "tx_test" };
+        }
+        return { gatewayReference: input.gatewayReference, status: "FAILED", errorCode: "DECLINED", errorMessage: "Declined" };
+      }
+
+      public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
+        this.refunds.push(input);
+        return { gatewayRefundReference: `rfnd_${this.refunds.length}`, status: this.refundStatus };
+      }
+    }
+
+    const buildLocalBoundary = async (provider: DeferredRefundProvider): Promise<AcosIntegrationBoundary> => {
+      const runtimeFactory = new RuntimeFactory();
+      runtimeFactory.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+      runtimeFactory.health.registerCheck("backend", async () => ({ name: "backend", healthy: true } as any));
+
+      const localBoundary = new AcosIntegrationBoundary(new Logger("AcosDeferredRefund", writer), runtimeFactory, {
+        paymentProvider: provider
+      });
+      await localBoundary.connect("test", undefined, { allowInMemory: true, allowInProcessBus: true });
+      return localBoundary;
+    };
+
+    const setupConfirmedPayment = async (localBoundary: AcosIntegrationBoundary, orgSlug: string) => {
+      const user = await localBoundary.signUp(`${orgSlug}@example.com`, password, "Async Merchant");
+      const org = await localBoundary.onboardBusiness(user.id, "Async Shop", orgSlug, "USD", "SaaS", "USA", "ops@async.test");
+      const customer = await localBoundary.createCustomer(user.id, {
+        organizationId: org.id,
+        customerNumber: "CUST-ASYNC-1",
+        name: "Async Buyer",
+        email: "buyer@async.test",
+        primaryContact: { name: "Async Buyer", email: "buyer@async.test" },
+        billingAddress: { line1: "1 Async St", city: "Austin", state: "TX", postalCode: "73301", country: "USA" }
+      });
+      const invoice = await localBoundary.createInvoice(user.id, {
+        organizationId: org.id,
+        customerId: customer.id,
+        invoiceNumber: "INV-ASYNC-001",
+        currency: "USD",
+        paymentTerms: "NET_30",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lines: [{ description: "Services", quantity: 1, unitPrice: 500, taxRate: 0 }]
+      });
+      await localBoundary.issueInvoice(user.id, invoice.id);
+      await localBoundary.sendInvoice(user.id, invoice.id);
+
+      const payment = await localBoundary.createPaymentRequest(user.id, invoice.id);
+      const { PaymentId } = await import("acos-backend");
+      const aggRes = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+      await localBoundary.processPaymentWebhook(aggRes.value.gatewayReference!.value, true, undefined, undefined, "pay_test_1");
+
+      return { user, org, customer, invoice, payment };
+    };
+
+    const readInvoiceStatus = async (localBoundary: AcosIntegrationBoundary, invoiceId: string): Promise<string> => {
+      const { InvoiceId } = await import("acos-backend");
+      const res = await localBoundary.invoiceRepository.findById(InvoiceId.from(invoiceId));
+      return res.value.status;
+    };
+
+    const readOutstanding = async (localBoundary: AcosIntegrationBoundary, orgId: string, customerId: string): Promise<number> => {
+      const { OrganizationId, CustomerId } = await import("acos-backend");
+      const res = await localBoundary.accountsReceivableRepository.findByCustomer(OrganizationId.from(orgId), CustomerId.from(customerId));
+      return res.value.getOutstandingBalance("USD").amount;
+    };
+
+    it("captures the gateway payment id at collection and completes the refund on the webhook", async () => {
+      const provider = new DeferredRefundProvider();
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(localBoundary, "async-shop");
+
+        // The webhook captured the gateway's own payment identifier
+        const { PaymentId } = await import("acos-backend");
+        const captured = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(captured.value.gatewayPaymentId).toBe("pay_test_1");
+
+        // The gateway accepts the refund but has not moved the money yet
+        const requested = await localBoundary.refundPayment(user.id, payment.id, 500, "Order returned");
+        expect(requested.status).toBe("REFUND_REQUESTED");
+        expect(provider.refunds).toHaveLength(1);
+        expect(provider.refunds[0].gatewayPaymentId).toBe("pay_test_1");
+        expect(provider.refunds[0].refundRequestId).toBeDefined();
+
+        // Ledger reversal is deferred: the invoice stays paid, the receivable stays settled
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        // refund.processed webhook settles the refund and reverses the ledger
+        const settled = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
+        expect(settled.status).toBe("REFUNDED");
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("ISSUED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+
+        // A re-delivered webhook is idempotent and does not double-reverse
+        const again = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
+        expect(again.status).toBe("REFUNDED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("releases the refund hold when the gateway declines the refund", async () => {
+      const provider = new DeferredRefundProvider();
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(localBoundary, "decline-shop");
+
+        const requested = await localBoundary.refundPayment(user.id, payment.id, 500, "Order returned");
+        expect(requested.status).toBe("REFUND_REQUESTED");
+
+        // refund.failed webhook rejects the request; nothing moved on the ledger
+        const declined = await localBoundary.processRefundWebhook(
+          payment.id,
+          provider.lastRefundRequestId!,
+          false,
+          "REFUND_DECLINED",
+          "Refund declined by the issuing bank"
+        );
+        expect(declined.status).toBe("CONFIRMED");
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        // The rejected amount no longer counts against the refund cap
+        provider.refundStatus = "SUCCEEDED";
+        const retried = await localBoundary.refundPayment(user.id, payment.id, 500, "Second attempt");
+        expect(retried.status).toBe("REFUNDED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+      } finally {
+        await localBoundary.disconnect();
+      }
     });
   });
 

@@ -41,6 +41,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       methodDetails: "{}",
       transactionHash: null,
       gatewayReference: row.gatewayReference,
+      gatewayPaymentId: row.gatewayPaymentId,
       walletAddress: null,
       metadata: {},
       confirmations: 1,
@@ -138,6 +139,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       const snapshot = PaymentSerializer.serialize(payment);
       const invoiceId = snapshot.allocations[0]?.invoiceId || "";
       const gatewayReference = snapshot.gatewayReference || `gtwy_${snapshot.reference}`;
+      const gatewayPaymentId = snapshot.gatewayPaymentId || null;
 
       await this.db.payment.upsert({
         where: { id: snapshot.id },
@@ -150,7 +152,8 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           currency: snapshot.currency,
           status: snapshot.status,
           method: snapshot.methodType,
-          gatewayReference
+          gatewayReference,
+          gatewayPaymentId
         },
         update: {
           organizationId: snapshot.organizationId,
@@ -160,7 +163,8 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           currency: snapshot.currency,
           status: snapshot.status,
           method: snapshot.methodType,
-          gatewayReference
+          gatewayReference,
+          gatewayPaymentId
         }
       });
 
