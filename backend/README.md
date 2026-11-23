@@ -6,16 +6,16 @@ The backend workspace contains the core transactional capabilities, domain aggre
 
 ## 🏗️ Folder Structure
 
--   **[src/foundation](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation)**: Strategic Domain-Driven Design (DDD) base classes:
-    -   `core/`: Base implementations for [AggregateRoot](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/AggregateRoot.ts), [Entity](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/Entity.ts), [ValueObject](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/ValueObject.ts), [Identifier](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/Identifier.ts), [Specification](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/Specification.ts), and [Clock](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/foundation/core/Clock.ts).
--   **[src/business](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/business)**: Authoritative business domains:
+-   **[src/foundation](src/foundation)**: Strategic Domain-Driven Design (DDD) base classes:
+    -   `core/`: Base implementations for [AggregateRoot](src/foundation/core/AggregateRoot.ts), [Entity](src/foundation/core/Entity.ts), [ValueObject](src/foundation/core/ValueObject.ts), [Identifier](src/foundation/core/Identifier.ts), [Specification](src/foundation/core/Specification.ts), and [Clock](src/foundation/core/Clock.ts).
+-   **[src/business](src/business)**: Authoritative business domains:
     -   `identity`: User aggregate, verification tokens, login attempt lists.
     -   `organization`: Slugs, currencies, member credentials, settings.
     -   `customer`: Billing address details, primary contact value objects.
     -   `invoice`: Invoice number value object, status state machines, line items list.
     -   `payment`: Gateway references, payment references, allocations.
     -   `accounts_receivable`: Debits, credits, ledger allocations, outstanding balance checks.
--   **[src/application](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/src/application)**: Application-specific command/query definitions and CQRS orchestration pipelines:
+-   **[src/application](src/application)**: Application-specific command/query definitions and CQRS orchestration pipelines:
     -   `foundation/pipeline/Mediator.ts`: Standard CQRS mediator dispatcher.
     -   `handlers/`: Command/query execution logic (e.g., `RegisterUserCommandHandler`, `CreateInvoiceCommandHandler`).
 -   **`src/kernel`**: The public syscall surface (`acos-backend`, `/application`). Nothing outside these entry points is API. Persistence and messaging adapters live with the consumer in `products/merchant/src/adapters`.
@@ -24,7 +24,7 @@ The backend workspace contains the core transactional capabilities, domain aggre
 
 ## 📏 DDD Coding Rules & Constraints
 
-To maintain clean separation and pure business logic, developers must adhere to the rules outlined in **[Core Design Guide.md](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/backend/Core%20Design%20Guide.md)**:
+To maintain clean separation and pure business logic, developers must adhere to the rules outlined in **[Core Design Guide.md](Core%20Design%20Guide.md)**:
 
 ### 1. Repository Boundary
 *   **Only Aggregate Roots get repositories** (`IRepository`).

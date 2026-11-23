@@ -16,7 +16,7 @@ AcosIntegrationBoundary ───► CQRS Mediator ───► ACOS Subsystems
 Prisma Database Client ────► PostgreSQL (durable persistence)
 ```
 
--   **Authoritative Boundary**: The merchant application never updates business or financial states directly. All mutations pass through [AcosIntegrationBoundary.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/integration/AcosIntegrationBoundary.ts) command handlers.
+-   **Authoritative Boundary**: The merchant application never updates business or financial states directly. All mutations pass through [AcosIntegrationBoundary.ts](src/integration/AcosIntegrationBoundary.ts) command handlers.
 -   **Durable Outbox**: In production mode, mutations write events to the `OutboxEvent` table. The outbox processor polls this table sequentially, publishing events to the message bus to ensure transactional integrity.
 -   **Broker Transport**: When `MERCHANT_BROKER_URL` is set, the message bus is backed by a Redis stream, so events reach every replica instead of only the process that wrote them. Each replica consumes under its own group; a failed handler stays pending and is reclaimed, repeated failures are dead-lettered to `acos.events.dead`, and a group that disappears is rebuilt at the start of the retained stream instead of stalling delivery. Without the URL the boundary refuses to start unless the caller explicitly passes `allowInProcessBus`, which keeps the in-process bus and cannot deliver events to other replicas.
 -   **Payment Gateway**: `PAYMENT_PROVIDER=razorpay` collects INR invoices through Razorpay Payment Links: `createPaymentRequest` returns a hosted `paymentUrl`, the stored gateway reference is the link id, and `payment_link.paid` is verified over the raw request body with `X-Razorpay-Signature` before the payment is confirmed. Confirmation always re-reads the payment from Razorpay, so a callback cannot confirm money the gateway has not captured. The default `sandbox` provider simulates the gateway in-process.
@@ -25,11 +25,11 @@ Prisma Database Client ────► PostgreSQL (durable persistence)
 
 ## 📁 Workspace Map
 
--   **[src/start.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/start.ts)**: Configures the mock runtime factory, establishes database boundaries, and boots the Express server.
--   **[src/backend/MerchantBackend.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/backend/MerchantBackend.ts)**: Express.js REST application. Manages session cookie generation, idempotency record checks, raw-body capture for webhook signatures, and correlation context storage.
--   **[src/integration/PrismaRepositories.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/integration/PrismaRepositories.ts)**: Persistence adapters mapping ACOS aggregates to PostgreSQL tables.
--   **[src/frontend/MerchantFrontend.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/frontend/MerchantFrontend.ts)**: Simulated client SDK mimicking client actions (e.g., API requests).
--   **[src/events/consumers/MerchantEventConsumer.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/events/consumers/MerchantEventConsumer.ts)**: Subscribes to invoice state updates, clearing presentation caches.
+-   **[src/start.ts](src/start.ts)**: Configures the mock runtime factory, establishes database boundaries, and boots the Express server.
+-   **[src/backend/MerchantBackend.ts](src/backend/MerchantBackend.ts)**: Express.js REST application. Manages session cookie generation, idempotency record checks, raw-body capture for webhook signatures, and correlation context storage.
+-   **[src/integration/PrismaRepositories.ts](src/integration/PrismaRepositories.ts)**: Persistence adapters mapping ACOS aggregates to PostgreSQL tables.
+-   **[src/frontend/MerchantFrontend.ts](src/frontend/MerchantFrontend.ts)**: Simulated client SDK mimicking client actions (e.g., API requests).
+-   **[src/events/consumers/MerchantEventConsumer.ts](src/events/consumers/MerchantEventConsumer.ts)**: Subscribes to invoice state updates, clearing presentation caches.
 
 ---
 
