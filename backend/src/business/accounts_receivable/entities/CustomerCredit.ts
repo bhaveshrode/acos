@@ -2,13 +2,19 @@ import { Entity } from "../../../foundation/core/Entity.js";
 import { UniqueEntityID } from "../../../foundation/core/Identifier.js";
 import { CreditSource } from "../enums/CreditSource.js";
 import { CreditReason } from "../value-objects/CreditReason.js";
+import { InvoiceId } from "../../invoice/value-objects/InvoiceId.js";
 import { Money } from "../../invoice/value-objects/Money.js";
+import { SettlementId } from "../../settlement/value-objects/SettlementId.js";
 
 export interface CustomerCreditProps {
   source: CreditSource;
   amount: Money;
   remainingBalance: Money;
   reason: CreditReason;
+  /** Payment that produced the credit, so a refund can return this money first. */
+  settlementId: SettlementId | null;
+  /** Invoice whose application produced the excess. */
+  invoiceId: InvoiceId | null;
   createdAt: Date;
 }
 
@@ -27,6 +33,8 @@ export class CustomerCredit extends Entity<UniqueEntityID> {
   public get amount(): Money { return this.props.amount; }
   public get remainingBalance(): Money { return this.props.remainingBalance; }
   public get reason(): CreditReason { return this.props.reason; }
+  public get settlementId(): SettlementId | null { return this.props.settlementId; }
+  public get invoiceId(): InvoiceId | null { return this.props.invoiceId; }
   public get createdAt(): Date { return this.props.createdAt; }
 
   /**

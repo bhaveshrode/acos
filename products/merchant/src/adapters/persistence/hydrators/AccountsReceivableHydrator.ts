@@ -61,6 +61,8 @@ export class AccountsReceivableHydrator {
               amount: Money.create(credit.amount, credit.currency).value,
               remainingBalance: Money.create(credit.remainingAmount, credit.currency).value,
               reason: CreditReason.create(credit.reason).value,
+              settlementId: credit.settlementId ? new SettlementId(credit.settlementId) : null,
+              invoiceId: credit.invoiceId ? new InvoiceId(credit.invoiceId) : null,
               createdAt: credit.createdAt
             })
         ),

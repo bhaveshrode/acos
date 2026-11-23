@@ -37,6 +37,7 @@ import { PaymentApplied } from "../events/PaymentApplied.js";
 import { RefundApplied } from "../events/RefundApplied.js";
 import { CustomerCreditCreated } from "../events/CustomerCreditCreated.js";
 import { CustomerCreditApplied } from "../events/CustomerCreditApplied.js";
+import { CustomerCreditRefunded } from "../events/CustomerCreditRefunded.js";
 import { InvoiceOverdue } from "../events/InvoiceOverdue.js";
 import { CollectionStarted } from "../events/CollectionStarted.js";
 import { ReceivableWrittenOff } from "../events/ReceivableWrittenOff.js";
@@ -57,6 +58,21 @@ export interface AccountsReceivableProps {
   collectionActions: CollectionAction[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** How much of a credit refund was returned against one invoice's overpayment. */
+export interface CreditRefundShare {
+  invoiceId: InvoiceId;
+  amount: Money;
+}
+
+export interface CreditRefundResult {
+  /** Credit actually returned; zero when no credit belongs to the payment. */
+  consumed: Money;
+  /** Part of the request left for invoice-obligation reversal. */
+  remainder: Money;
+  /** Consumed credit grouped by the invoice whose overpayment produced it. */
+  shares: CreditRefundShare[];
 }
 
 /**
@@ -221,6 +237,8 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
         amount,
         remainingBalance: amount,
         reason: CreditReason.create(`Payment applied to unregistered invoice obligation: ${invoiceId.value}`).value,
+        settlementId,
+        invoiceId,
         createdAt: new Date()
       });
       this.props.customerCredits.push(credit);
@@ -240,6 +258,8 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
         amount,
         remainingBalance: amount,
         reason: CreditReason.create(`Overpayment credit for already paid invoice: ${invoiceId.value}`).value,
+        settlementId,
+        invoiceId,
         createdAt: new Date()
       });
       this.props.customerCredits.push(credit);
@@ -270,6 +290,8 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
         amount: excess,
         remainingBalance: excess,
         reason: CreditReason.create(`Overpayment credit from payment application on invoice: ${invoiceId.value}`).value,
+        settlementId,
+        invoiceId,
         createdAt: new Date()
       });
       this.props.customerCredits.push(credit);
@@ -349,6 +371,63 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
     this.addDomainEvent(new AccountBalanceUpdated(this.id.value, this.getAccountBalance(amount.currency)));
 
     return Result.ok();
+  }
+
+  /**
+   * Returns unapplied credit to the payer. A refund settles the money the
+   * refunded payment left unapplied before it re-opens any invoice obligation,
+   * so only credit created by `settlementId` is consumed; other payments'
+   * credits are untouched.
+   */
+  public refundCredit(settlementId: SettlementId, amount: Money): Result<CreditRefundResult> {
+    const editCheck = this.ensureMutable();
+    if (editCheck.isFailure) return Result.fail(editCheck.error);
+    if (amount.amount <= 0) {
+      return Result.fail(ResultError.conflict("Refund amount must be positive."));
+    }
+
+    const candidates = this.props.customerCredits
+      .filter(
+        (credit) =>
+          credit.settlementId?.equals(settlementId) &&
+          credit.remainingBalance.currency === amount.currency &&
+          credit.remainingBalance.amount > 0
+      )
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    let remaining = amount.amount;
+    const shares = new Map<string, CreditRefundShare>();
+    for (const credit of candidates) {
+      if (remaining <= 0) break;
+      const consumed = Math.min(remaining, credit.remainingBalance.amount);
+      credit.consume(Money.create(consumed, amount.currency).value);
+      remaining -= consumed;
+
+      if (credit.invoiceId) {
+        const existing = shares.get(credit.invoiceId.value);
+        if (existing) {
+          existing.amount = Money.create(existing.amount.amount + consumed, amount.currency).value;
+        } else {
+          shares.set(credit.invoiceId.value, {
+            invoiceId: credit.invoiceId,
+            amount: Money.create(consumed, amount.currency).value
+          });
+        }
+      }
+    }
+
+    const consumedTotal = amount.amount - remaining;
+    if (consumedTotal > 0) {
+      this.props.updatedAt = new Date();
+      this.addDomainEvent(new CustomerCreditRefunded(this.id.value, Money.create(consumedTotal, amount.currency).value));
+      this.addDomainEvent(new AccountBalanceUpdated(this.id.value, this.getAccountBalance(amount.currency)));
+    }
+
+    return Result.ok({
+      consumed: Money.create(consumedTotal, amount.currency).value,
+      remainder: Money.create(remaining, amount.currency).value,
+      shares: Array.from(shares.values())
+    });
   }
 
   /**

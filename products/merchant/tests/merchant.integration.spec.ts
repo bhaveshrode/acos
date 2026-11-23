@@ -969,7 +969,12 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       return localBoundary;
     };
 
-    const setupConfirmedPayment = async (localBoundary: AcosIntegrationBoundary, orgSlug: string, amount = 500) => {
+    const setupConfirmedPayment = async (
+      localBoundary: AcosIntegrationBoundary,
+      orgSlug: string,
+      amount = 500,
+      paidAmount = amount
+    ) => {
       const user = await localBoundary.signUp(`${orgSlug}@example.com`, password, "Async Merchant");
       const org = await localBoundary.onboardBusiness(user.id, "Async Shop", orgSlug, "USD", "SaaS", "USA", "ops@async.test");
       const customer = await localBoundary.createCustomer(user.id, {
@@ -993,7 +998,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       await localBoundary.issueInvoice(user.id, invoice.id);
       await localBoundary.sendInvoice(user.id, invoice.id);
 
-      const payment = await localBoundary.createPaymentRequest(user.id, invoice.id);
+      const payment = await localBoundary.createPaymentRequest(user.id, invoice.id, paidAmount);
       const { PaymentId } = await import("acos-backend");
       const aggRes = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
       await localBoundary.processPaymentWebhook(aggRes.value.gatewayReference!.value, true, undefined, undefined, "pay_test_1");
@@ -1011,6 +1016,12 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       const { OrganizationId, CustomerId } = await import("acos-backend");
       const res = await localBoundary.accountsReceivableRepository.findByCustomer(OrganizationId.from(orgId), CustomerId.from(customerId));
       return res.value.getOutstandingBalance("USD").amount;
+    };
+
+    const readCredit = async (localBoundary: AcosIntegrationBoundary, orgId: string, customerId: string): Promise<number> => {
+      const { OrganizationId, CustomerId } = await import("acos-backend");
+      const res = await localBoundary.accountsReceivableRepository.findByCustomer(OrganizationId.from(orgId), CustomerId.from(customerId));
+      return res.value.getCreditBalance("USD").amount;
     };
 
     it("captures the gateway payment id at collection and completes the refund on the webhook", async () => {
@@ -1106,6 +1117,58 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         const refunded = await localBoundary.refundPayment(user.id, payment.id, 500, "Within cap");
         expect(refunded.status).toBe("REFUNDED");
         expect(provider.refunds).toHaveLength(1);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("refunds an overpayment's unapplied credit without reopening the settled invoice", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(
+          localBoundary,
+          "overpay-shop",
+          100,
+          150
+        );
+
+        // The extra 50 never settled an obligation; it is customer credit.
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("OVERPAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(50);
+
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 50, "Return the overpayment");
+        expect(refunded.status).toBe("CONFIRMED");
+
+        // Only the credit moved: the invoice obligation stays settled.
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("refunds an overpayment in full by consuming credit before reversing the obligation", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(
+          localBoundary,
+          "overpay-full-shop",
+          100,
+          150
+        );
+
+        // 150 refunded against a 100 invoice: 50 of credit, 100 of obligation.
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 150, "Cancel the sale");
+        expect(refunded.status).toBe("REFUNDED");
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("ISSUED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(100);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
       } finally {
         await localBoundary.disconnect();
       }

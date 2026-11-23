@@ -32,6 +32,8 @@ export class AccountsReceivableSerializer {
         remainingAmount: credit.remainingBalance.amount,
         currency: credit.remainingBalance.currency,
         reason: credit.reason.value,
+        settlementId: credit.settlementId?.value ?? null,
+        invoiceId: credit.invoiceId?.value ?? null,
         createdAt: credit.createdAt
       })),
       collectionActions: ar.collectionActions.map((action) => ({

@@ -86,6 +86,7 @@ export { AccountBalanceUpdated } from "../business/accounts_receivable/events/Ac
 export { CollectionStarted } from "../business/accounts_receivable/events/CollectionStarted.js";
 export { CustomerCreditApplied } from "../business/accounts_receivable/events/CustomerCreditApplied.js";
 export { CustomerCreditCreated } from "../business/accounts_receivable/events/CustomerCreditCreated.js";
+export { CustomerCreditRefunded } from "../business/accounts_receivable/events/CustomerCreditRefunded.js";
 export { InvoiceOverdue } from "../business/accounts_receivable/events/InvoiceOverdue.js";
 export { OutstandingBalanceUpdated } from "../business/accounts_receivable/events/OutstandingBalanceUpdated.js";
 export { PaymentApplied } from "../business/accounts_receivable/events/PaymentApplied.js";
@@ -96,6 +97,7 @@ export { ReceivableWrittenOff } from "../business/accounts_receivable/events/Rec
 export { applyRefund } from "../business/accounts_receivable/operations/ApplyRefund.js";
 export { applyReceivablePayment } from "../business/accounts_receivable/operations/ApplyReceivablePayment.js";
 export { getReceivableCreditBalance } from "../business/accounts_receivable/operations/GetReceivableCreditBalance.js";
+export { refundCustomerCredit } from "../business/accounts_receivable/operations/RefundCustomerCredit.js";
 export { openReceivableAccount } from "../business/accounts_receivable/operations/OpenReceivableAccount.js";
 export { registerInvoiceObligation } from "../business/accounts_receivable/operations/RegisterInvoiceObligation.js";
 export type { IAccountsReceivableRepository } from "../business/accounts_receivable/repositories/IAccountsReceivableRepository.js";
