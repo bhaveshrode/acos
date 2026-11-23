@@ -157,6 +157,10 @@ export class MerchantFrontend {
     return this.paymentClient.refundPayment(id, amount, reason);
   }
 
+  public applyCreditToInvoice(invoiceId: string, amount?: number): Promise<any> {
+    return this.paymentClient.applyCreditToInvoice(invoiceId, amount);
+  }
+
   public getPayment(id: string): Promise<any> {
     return this.paymentClient.getPayment(id);
   }

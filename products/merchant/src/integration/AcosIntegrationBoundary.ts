@@ -53,6 +53,7 @@ import {
   registerInvoiceObligation,
   applyReceivablePayment,
   applyRefund,
+  applyCustomerCredit,
   refundCustomerCredit,
   getReceivableCreditBalance,
   requestRefund,
@@ -1475,6 +1476,96 @@ export class AcosIntegrationBoundary {
 
     const mapper = new PaymentMapper();
     return mapper.map(payment);
+  }
+
+  /**
+   * Settles an outstanding invoice with the customer's unapplied credit.
+   * Amounts are capped by both the invoice's remaining balance and the
+   * customer's credit balance; omitting the amount applies as much as possible.
+   */
+  public async applyCreditToInvoice(userId: string, invoiceId: string, amount?: number): Promise<any> {
+    this.logger.info("applyCreditToInvoice: Processing request...", { userId, invoiceId, amount });
+
+    const invoiceRes = await this.invoiceRepository.findById(new InvoiceId(invoiceId));
+    if (invoiceRes.isFailure) {
+      throw new Error(`Invoice with ID ${invoiceId} not found.`);
+    }
+    const invoice = invoiceRes.value;
+
+    await this.verifyBusinessOwnership(userId, invoice.organizationId.value);
+
+    const isCollectable = invoice.sentAt !== null && (invoice.status === "ISSUED" || invoice.status === "PARTIALLY_PAID");
+    if (!isCollectable) {
+      throw new Error("Credit application rejected: Credit can only be applied to SENT invoices awaiting payment.");
+    }
+    if (amount !== undefined && (typeof amount !== "number" || amount <= 0)) {
+      throw new Error("Credit application amount must be a positive number.");
+    }
+
+    return this.withinTransaction(async () => {
+      let ar: AccountsReceivable;
+      const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
+      if (arRes.isSuccess) {
+        ar = arRes.value;
+      } else {
+        const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
+        if (openRes.isFailure) {
+          throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+        }
+        ar = openRes.value;
+      }
+
+      const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
+      if (registerRes.isFailure) {
+        throw new Error(`Accounts Receivable booking rejected: ${registerRes.error.message}`);
+      }
+
+      const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+      if (!entry) {
+        throw new Error("Accounts Receivable booking rejected: invoice obligation was not registered.");
+      }
+
+      const requested = amount ?? Math.min(ar.getCreditBalance(invoice.currency).amount, entry.remainingBalance.amount);
+      if (requested <= 0) {
+        throw new Error("Credit application rejected: the customer has no available credit in the invoice currency.");
+      }
+
+      const applyRes = applyCustomerCredit(ar, invoice.id, Money.create(requested, invoice.currency).value);
+      if (applyRes.isFailure) {
+        throw new Error(`Accounts Receivable credit application rejected: ${applyRes.error.message}`);
+      }
+
+      const arSaveRes = await this.accountsReceivableRepository.save(ar);
+      if (arSaveRes.isFailure) {
+        throw new Error(`Failed to persist receivable ledger: ${arSaveRes.error.message}`);
+      }
+
+      // Credit settlements leave no Payment row, so the invoice's paid amount is
+      // re-derived from its receivable entry instead of gateway allocations.
+      const netPaid = invoice.grandTotal.amount - entry.remainingBalance.amount;
+      const recordRes = recordPayment(invoice, Money.create(netPaid, invoice.currency).value);
+      if (recordRes.isFailure) {
+        throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
+      }
+      const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+      if (invoiceSaveRes.isFailure) {
+        throw new Error(`Failed to save reconciled invoice: ${invoiceSaveRes.error.message}`);
+      }
+
+      if (invoice.domainEvents.length > 0) {
+        this.logger.info(`Publishing ACOS invoice credit-application events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
+        await this.eventBus.publishAll(invoice.domainEvents);
+        invoice.clearDomainEvents();
+      }
+
+      return {
+        invoiceId: invoice.id.value,
+        amountApplied: requested,
+        invoiceStatus: invoice.status,
+        outstandingBalance: entry.remainingBalance.amount,
+        creditBalance: ar.getCreditBalance(invoice.currency).amount
+      };
+    });
   }
 
   /**
