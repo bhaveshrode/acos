@@ -1914,12 +1914,28 @@ export class AcosIntegrationBoundary {
    */
   private async reconcileRefundReversal(payment: Payment, amount: number): Promise<void> {
     const currency = payment.amount.currency;
+
+    // The receivable ledger hangs off the customer, and a persisted payment
+    // row carries no customer id, so the settlement target supplies it.
+    const firstAllocation = payment.allocations[0];
+    if (!firstAllocation) {
+      throw new Error("Refund reversal requires the payment to settle at least one invoice.");
+    }
+    const anchorInvoice = await this.loadReversalInvoice(
+      payment,
+      firstAllocation.invoiceId,
+      firstAllocation.allocatedAmount.currency
+    );
+
     let ar: AccountsReceivable;
-    const arRes = await this.accountsReceivableRepository.findByCustomer(payment.organizationId, payment.customerId);
+    const arRes = await this.accountsReceivableRepository.findByCustomer(
+      anchorInvoice.organizationId,
+      anchorInvoice.customerId
+    );
     if (arRes.isSuccess) {
       ar = arRes.value;
     } else {
-      const openRes = openReceivableAccount(payment.organizationId, payment.customerId);
+      const openRes = openReceivableAccount(anchorInvoice.organizationId, anchorInvoice.customerId);
       if (openRes.isFailure) {
         throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
       }
@@ -1939,10 +1955,26 @@ export class AcosIntegrationBoundary {
     const { consumed, remainder: remainderMoney, shares } = creditRes.value;
     let arDirty = consumed.amount > 0;
 
-    // Credit-funded refunds still reduce the invoice's refunded total.
+    // Invoice status is derived from the total refunded against it, so credit
+    // and obligation portions are merged into one update per invoice.
+    const refundedByInvoice = new Map<string, { invoice: Invoice; amount: number }>();
+    const addInvoiceRefund = (invoice: Invoice, invoiceAmount: number): void => {
+      const existing = refundedByInvoice.get(invoice.id.value);
+      if (existing) {
+        existing.amount += invoiceAmount;
+      } else {
+        refundedByInvoice.set(invoice.id.value, { invoice, amount: invoiceAmount });
+      }
+    };
+
     for (const share of shares) {
-      const invoice = await this.loadReversalInvoice(payment, share.invoiceId, currency);
-      await this.recordInvoiceRefund(payment, invoice, share.amount);
+      const invoice = await this.loadReversalInvoice(
+        payment,
+        share.invoiceId,
+        currency,
+        anchorInvoice.customerId
+      );
+      addInvoiceRefund(invoice, share.amount.amount);
     }
 
     // 2. Re-open the obligations the payment actually settled.
@@ -1953,21 +1985,21 @@ export class AcosIntegrationBoundary {
       const allocationRefund = Math.min(remainingRefund, allocation.allocatedAmount.amount);
       if (allocationRefund <= 0) break;
       remainingRefund -= allocationRefund;
-      const allocationRefundMoney = Money.create(allocationRefund, currency).value;
 
       const invoice = await this.loadReversalInvoice(
         payment,
         allocation.invoiceId,
-        allocation.allocatedAmount.currency
+        allocation.allocatedAmount.currency,
+        anchorInvoice.customerId
       );
 
-      const applyRes = applyRefund(ar, invoice.id, allocationRefundMoney);
+      const applyRes = applyRefund(ar, invoice.id, Money.create(allocationRefund, currency).value);
       if (applyRes.isFailure) {
         throw new Error(`Accounts Receivable refund rejected: ${applyRes.error.message}`);
       }
       arDirty = true;
 
-      await this.recordInvoiceRefund(payment, invoice, allocationRefundMoney);
+      addInvoiceRefund(invoice, allocationRefund);
     }
 
     if (arDirty) {
@@ -1976,10 +2008,19 @@ export class AcosIntegrationBoundary {
         throw new Error(`Failed to persist receivable ledger: ${arSaveRes.error.message}`);
       }
     }
+
+    for (const { invoice, amount: invoiceRefund } of refundedByInvoice.values()) {
+      await this.recordInvoiceRefund(payment, invoice, Money.create(invoiceRefund, invoice.currency).value);
+    }
     this.logger.info("refundPayment: Reversal reconciliation completed successfully.");
   }
 
-  private async loadReversalInvoice(payment: Payment, invoiceId: InvoiceId, currency: string): Promise<Invoice> {
+  private async loadReversalInvoice(
+    payment: Payment,
+    invoiceId: InvoiceId,
+    currency: string,
+    expectedCustomerId?: CustomerId
+  ): Promise<Invoice> {
     const invoiceRes = await this.invoiceRepository.findById(invoiceId);
     if (invoiceRes.isFailure) {
       throw new Error(`Refund reversal target not found: Invoice ${invoiceId.value} not found.`);
@@ -1990,8 +2031,8 @@ export class AcosIntegrationBoundary {
     if (invoice.organizationId.value !== payment.organizationId.value) {
       throw new Error("Access Denied: Cross-tenant boundary breach. Confirmed payment cannot be reconciled against another merchant's invoice.");
     }
-    // The reversal runs on the payment customer's ledger, so the invoice must belong to it.
-    if (invoice.customerId.value !== payment.customerId.value) {
+    // Every reversal target must share the customer whose ledger is re-opened.
+    if (expectedCustomerId && invoice.customerId.value !== expectedCustomerId.value) {
       throw new Error("Access Denied: Cross-customer boundary breach. Refund reversal cannot reconcile another customer's invoice.");
     }
 
