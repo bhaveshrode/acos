@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "../..");
 const repoRoot = join(here, "../../..");
 
-const SURFACE_SIZE = 384;
+const SURFACE_SIZE = 385;
 const APPLICATION_SIZE = 29;
 const ALLOWED_SUBPATHS = ["application"];
 const ENTRY_FILES = ["index.ts", "application.ts"];

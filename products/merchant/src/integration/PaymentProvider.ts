@@ -50,6 +50,20 @@ export interface RefundResponse {
   errorMessage?: string;
 }
 
+/**
+ * Thrown by a provider when the gateway may or may not have accepted a refund
+ * (transport failure, server error, malformed success response). Callers must
+ * keep the refund reservation pending — releasing it could let a retry create
+ * a second gateway refund — and let the refund webhook or manual
+ * reconciliation resolve the outcome.
+ */
+export class RefundOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RefundOutcomeUnknownError";
+  }
+}
+
 export interface IPaymentProvider {
   getName(): string;
   /**

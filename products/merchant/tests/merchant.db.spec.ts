@@ -10,6 +10,7 @@ import {
 } from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
+import { RefundOutcomeUnknownError } from "../src/integration/PaymentProvider.js";
 import { PrismaClient } from "@prisma/client";
 
 describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
@@ -360,7 +361,8 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     let paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
     expect(paymentRow.gatewayPaymentId).toBe("pay_async_1");
 
-    // A provider that settles asynchronously leaves the refund REQUESTED
+    // A provider that settles asynchronously leaves the refund APPROVED: the
+    // reservation was submitted to the gateway, so only the webhook may settle it.
     const originalProvider = (boundary as any).paymentProvider;
     (boundary as any).paymentProvider = {
       refundPayment: async () => ({ gatewayRefundReference: "rfnd_db_1", status: "PROCESSING" })
@@ -371,7 +373,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
       expect(requested.status).toBe("REFUND_REQUESTED");
 
       let refundRow = await prisma.refund.findFirst({ where: { paymentId: payment.id } });
-      expect(refundRow.status).toBe("REQUESTED");
+      expect(refundRow.status).toBe("APPROVED");
       expect(refundRow.amount.toNumber()).toBe(40);
       refundRequestId = refundRow.id;
 
@@ -398,6 +400,167 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(reopenedInvoice.status).toBe("PARTIALLY_PAID");
     const arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(40);
+  });
+
+  it("serializes concurrent refund reservations across independent database connections", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_race_${Date.now()}@example.com`;
+    const user = await frontend.signUp(email, "password123", "Refund Race Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Race Shop", `refund-race-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Race Rita",
+      customerNumber: `CUST-RACE-${Date.now()}`,
+      primaryContact: { name: "Race Rita", email: "rita-race@example.com" },
+      billingAddress: { line1: "3 Race Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-RACE-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Race Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    const payment = await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await boundary.processPaymentWebhook(dbPayment.gatewayReference, true, undefined, undefined, "pay_race_1");
+
+    // A second boundary opens its own Prisma pool, so the two refunds below run
+    // in independent transactions/connections rather than sharing one process.
+    const secondRuntime = new RuntimeFactory();
+    secondRuntime.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+    secondRuntime.health.registerCheck("backend", async () => ({ name: "backend", healthy: true } as any));
+    const provider = {
+      refundCalls: 0,
+      refundPayment: async () => {
+        provider.refundCalls += 1;
+        return { gatewayRefundReference: `rfnd_race_${provider.refundCalls}`, status: "PROCESSING" as const };
+      }
+    };
+    const secondBoundary = new AcosIntegrationBoundary(new Logger("AcosDbBoundaryRace", writer), secondRuntime, {
+      paymentProvider: provider as any
+    });
+    await secondBoundary.connect("test", dbUrl, { allowInProcessBus: true });
+
+    const originalProvider = (boundary as any).paymentProvider;
+    (boundary as any).paymentProvider = provider;
+    try {
+      // Both requests pass the pre-flight cap check against the same confirmed
+      // payment, so only the row lock and committed reservation can arbitrate.
+      const [first, second] = await Promise.allSettled([
+        boundary.refundPayment(user.id, payment.id, 100, "Concurrent A"),
+        secondBoundary.refundPayment(user.id, payment.id, 100, "Concurrent B")
+      ]);
+
+      const fulfilled = [first, second].filter((r) => r.status === "fulfilled");
+      const rejected = [first, second].filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/cannot exceed payment amount/);
+      expect(provider.refundCalls).toBe(1);
+
+      const refundRows = await prisma.refund.findMany({ where: { paymentId: payment.id } });
+      expect(refundRows).toHaveLength(1);
+      expect(refundRows[0].status).toBe("APPROVED");
+    } finally {
+      (boundary as any).paymentProvider = originalProvider;
+      await secondBoundary.disconnect();
+    }
+  });
+
+  it("sweeps stale reservations written under the reserve-before-submit protocol only", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_sweep_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Refund Sweep Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Sweep Shop", `refund-sweep-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Sweep Sam",
+      customerNumber: `CUST-SWEEP-${Date.now()}`,
+      primaryContact: { name: "Sweep Sam", email: "sam-sweep@example.com" },
+      billingAddress: { line1: "4 Sweep Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-SWEEP-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Sweep Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    const payment = await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await boundary.processPaymentWebhook(dbPayment.gatewayReference, true, undefined, undefined, "pay_sweep_1");
+
+    const originalProvider = (boundary as any).paymentProvider;
+    (boundary as any).paymentProvider = {
+      refundPayment: async () => {
+        throw new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      }
+    };
+    try {
+      const pending = await frontend.refundPayment(payment.id, 40, "Sweep probe");
+      expect(pending.status).toBe("REFUND_REQUESTED");
+
+      const reserved = await prisma.refund.findFirst({ where: { paymentId: payment.id } });
+      expect(reserved.status).toBe("APPROVED");
+      expect(reserved.submissionProtocol).toBe(1);
+
+      // Simulate a crash between the reservation commit and the submission
+      // marker: the row is provably never submitted and can be reclaimed.
+      const staleCreatedAt = new Date(Date.now() - 20 * 60 * 1000);
+      await prisma.refund.update({
+        where: { id: reserved.id },
+        data: { status: "REQUESTED", createdAt: staleCreatedAt }
+      });
+
+      expect(await boundary.sweepStaleRefundReservations()).toBe(1);
+      const released = await prisma.refund.findUnique({ where: { id: reserved.id } });
+      expect(released.status).toBe("REJECTED");
+      const releasedPayment = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+      expect(releasedPayment.status).toBe("CONFIRMED");
+
+      // A pre-upgrade row keeps the column default: it may already have
+      // reached the gateway, so the sweep must never release it automatically.
+      const legacy = await prisma.refund.create({
+        data: {
+          id: `legacy_refund_${Date.now()}`,
+          paymentId: dbPayment.id,
+          organizationId: dbPayment.organizationId,
+          invoiceId: invoice.id,
+          amount: 10,
+          currency: "USD",
+          status: "REQUESTED",
+          reason: "Legacy reservation",
+          createdAt: staleCreatedAt
+        }
+      });
+      expect(legacy.submissionProtocol).toBe(0);
+      expect(await boundary.sweepStaleRefundReservations()).toBe(0);
+      const untouched = await prisma.refund.findUnique({ where: { id: legacy.id } });
+      expect(untouched.status).toBe("REQUESTED");
+    } finally {
+      (boundary as any).paymentProvider = originalProvider;
+    }
   });
 
   it("stores monetary amounts without binary floating point drift", async () => {

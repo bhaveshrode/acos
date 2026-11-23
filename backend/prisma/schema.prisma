@@ -123,6 +123,7 @@ model Refund {
   status                 String
   reason                 String
   gatewayRefundReference String?
+  submissionProtocol     Int      @default(0)
   payment                Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt

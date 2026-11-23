@@ -199,14 +199,18 @@ describe("Payment Bounded Context Unit Tests (Tasks 15.2 - 15.5)", () => {
       expect(appRes.isSuccess).toBe(true);
       expect(payment.refundRequests[0].status).toBe(RefundStatus.APPROVED);
 
-      // Try to approve again or reject - should fail because status is not REQUESTED anymore
+      // Try to approve again - should fail because status is not REQUESTED anymore
       const appRes2 = payment.approveRefund(refundId);
       expect(appRes2.isFailure).toBe(true);
 
+      // An approved refund can still be rejected when the gateway declines it
       const rejectRes = payment.rejectRefund(refundId);
-      expect(rejectRes.isFailure).toBe(true);
+      expect(rejectRes.isSuccess).toBe(true);
+      expect(payment.refundRequests.find(r => r.id.equals(refundId))?.status).toBe(RefundStatus.REJECTED);
+      // No other open refunds remain, so the payment returns to CONFIRMED
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
 
-      // Create a second refund request to test rejection
+      // A requested refund can still be rejected directly
       const refundId2 = new UniqueEntityID();
       payment.requestRefund(refundId2, Money.create(10, "USDC").value, "Late delivery");
       expect(payment.status).toBe(PaymentStatus.REFUND_REQUESTED);
@@ -214,10 +218,38 @@ describe("Payment Bounded Context Unit Tests (Tasks 15.2 - 15.5)", () => {
       const rejRes = payment.rejectRefund(refundId2);
       expect(rejRes.isSuccess).toBe(true);
       expect(payment.refundRequests.find(r => r.id.equals(refundId2))?.status).toBe(RefundStatus.REJECTED);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
+    });
 
-      // Verify payment status went back to CONFIRMED because all remaining requests are approved/completed/rejected
-      // In this case: refundId is APPROVED (active), refundId2 is REJECTED (inactive). So payment status remains REFUND_REQUESTED.
+    it("should return to CONFIRMED when a rejected refund leaves only completed refunds", () => {
+      const payment = Payment.create(
+        PaymentId.generate(),
+        orgId,
+        custId,
+        payRef,
+        payAmount,
+        payMethod,
+        invId,
+        allocAmount
+      ).value;
+
+      payment.confirm(new UniqueEntityID(), TransactionHash.create("0x" + "d".repeat(64)).value, ConfirmationCount.create(1).value);
+
+      // Complete a partial refund: the payment returns to CONFIRMED
+      const completedId = new UniqueEntityID();
+      expect(payment.requestRefund(completedId, Money.create(40, "USDC").value, "Partial return").isSuccess).toBe(true);
+      expect(payment.completeRefund(completedId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
+
+      // A later refund the gateway declines must not leave the payment stuck in
+      // REFUND_REQUESTED: the completed refund is not an open request.
+      const declinedId = new UniqueEntityID();
+      expect(payment.requestRefund(declinedId, Money.create(60, "USDC").value, "Remaining return").isSuccess).toBe(true);
+      expect(payment.approveRefund(declinedId).isSuccess).toBe(true);
       expect(payment.status).toBe(PaymentStatus.REFUND_REQUESTED);
+
+      expect(payment.rejectRefund(declinedId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
     });
 
     it("should return to CONFIRMED after a partial refund completes and to REFUNDED after a full refund", () => {

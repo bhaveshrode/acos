@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
 import { Logger, LogEntry, PaymentMethodType } from "acos-backend";
 import type { LogWriter } from "acos-backend";
 import type { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "../src/integration/PaymentProvider.js";
+import { RefundOutcomeUnknownError } from "../src/integration/PaymentProvider.js";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
@@ -922,6 +923,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     class DeferredRefundProvider implements IPaymentProvider {
       public readonly refunds: RefundRequestInput[] = [];
       public refundStatus: "PROCESSING" | "SUCCEEDED" | "FAILED" = "PROCESSING";
+      public refundGate: Promise<void> | null = null;
+      public refundError: Error | null = null;
 
       public get lastRefundRequestId(): string | undefined {
         return this.refunds[this.refunds.length - 1]?.refundRequestId;
@@ -948,6 +951,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
         this.refunds.push(input);
+        if (this.refundGate) await this.refundGate;
+        if (this.refundError) throw this.refundError;
         return { gatewayRefundReference: `rfnd_${this.refunds.length}`, status: this.refundStatus };
       }
     }
@@ -964,7 +969,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       return localBoundary;
     };
 
-    const setupConfirmedPayment = async (localBoundary: AcosIntegrationBoundary, orgSlug: string) => {
+    const setupConfirmedPayment = async (localBoundary: AcosIntegrationBoundary, orgSlug: string, amount = 500) => {
       const user = await localBoundary.signUp(`${orgSlug}@example.com`, password, "Async Merchant");
       const org = await localBoundary.onboardBusiness(user.id, "Async Shop", orgSlug, "USD", "SaaS", "USA", "ops@async.test");
       const customer = await localBoundary.createCustomer(user.id, {
@@ -983,7 +988,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         paymentTerms: "NET_30",
         issueDate: new Date().toISOString(),
         dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        lines: [{ description: "Services", quantity: 1, unitPrice: 500, taxRate: 0 }]
+        lines: [{ description: "Services", quantity: 1, unitPrice: amount, taxRate: 0 }]
       });
       await localBoundary.issueInvoice(user.id, invoice.id);
       await localBoundary.sendInvoice(user.id, invoice.id);
@@ -1071,6 +1076,151 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         const retried = await localBoundary.refundPayment(user.id, payment.id, 500, "Second attempt");
         expect(retried.status).toBe("REFUNDED");
         expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("rejects an over-refund before the gateway is called", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(localBoundary, "cap-shop");
+
+        // 600 exceeds the 500 payment: the guard fires before any gateway I/O
+        await expect(localBoundary.refundPayment(user.id, payment.id, 600, "Too much")).rejects.toThrow(
+          /cannot exceed payment amount/
+        );
+        expect(provider.refunds).toHaveLength(0);
+
+        // Nothing moved on the payment aggregate or the ledger
+        const { PaymentId } = await import("acos-backend");
+        const reloaded = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(reloaded.value.status).toBe("CONFIRMED");
+        expect(reloaded.value.refundRequests).toHaveLength(0);
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        // The full amount within the cap still goes through
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 500, "Within cap");
+        expect(refunded.status).toBe("REFUNDED");
+        expect(provider.refunds).toHaveLength(1);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("serializes overlapping refunds through the committed reservation", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "race-shop");
+
+        let release!: () => void;
+        provider.refundGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+
+        const first = localBoundary.refundPayment(user.id, payment.id, 500, "First");
+        const deadline = Date.now() + 2000;
+        while (provider.refunds.length === 0) {
+          if (Date.now() > deadline) throw new Error("The first refund never reached the gateway.");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+
+        // The first refund's reservation is committed while its gateway call
+        // is still in flight, so the overlapping request fails the cap check
+        // before the gateway sees it.
+        await expect(localBoundary.refundPayment(user.id, payment.id, 500, "Overlap")).rejects.toThrow(
+          /cannot exceed payment amount/
+        );
+        expect(provider.refunds).toHaveLength(1);
+
+        release();
+        const settled = await first;
+        expect(settled.status).toBe("REFUNDED");
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("normalizes float amounts before comparing the refund cap", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "float-shop", 0.3);
+
+        // 0.1 + 0.2 is 0.30000000000000004 in raw arithmetic; in minor units
+        // it is exactly the 30-cent payment and must not be rejected.
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 0.1 + 0.2, "Cent split");
+        expect(refunded.status).toBe("REFUNDED");
+        expect(provider.refunds).toHaveLength(1);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("keeps the reservation pending when the gateway outcome is unknown", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundError = new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "unknown-shop");
+
+        // The refund is pending, not failed: the caller must not retry.
+        const pending = await localBoundary.refundPayment(user.id, payment.id, 500, "Network hiccup");
+        expect(pending.status).toBe("REFUND_REQUESTED");
+        expect(provider.refunds).toHaveLength(1);
+
+        // The reservation stays APPROVED, so capacity is not released...
+        const { PaymentId } = await import("acos-backend");
+        const reloaded = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(reloaded.value.status).toBe("REFUND_REQUESTED");
+        expect(reloaded.value.refundRequests).toHaveLength(1);
+        expect(reloaded.value.refundRequests[0].status).toBe("APPROVED");
+
+        // ...and a retry cannot create a second gateway refund.
+        await expect(localBoundary.refundPayment(user.id, payment.id, 500, "Retry")).rejects.toThrow(
+          /cannot exceed payment amount/
+        );
+        expect(provider.refunds).toHaveLength(1);
+
+        // The refund webhook resolves the pending reservation.
+        const settled = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
+        expect(settled.status).toBe("REFUNDED");
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("releases an unsubmitted reservation after the gateway confirms it never saw the refund", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundError = new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "recover-shop");
+        const pending = await localBoundary.refundPayment(user.id, payment.id, 500, "Lost connection");
+        expect(pending.status).toBe("REFUND_REQUESTED");
+
+        // The operator verified against the gateway that no refund exists for
+        // the request id, so the reservation is safe to release.
+        const { PaymentId } = await import("acos-backend");
+        const before = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        const requestId = before.value.refundRequests[0].id.value;
+        expect(await localBoundary.releaseUnsubmittedRefundReservation(payment.id, requestId)).toBe(true);
+
+        const after = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(after.value.status).toBe("CONFIRMED");
+        expect(after.value.refundRequests[0].status).toBe("REJECTED");
+
+        // Releasing the reservation restores the capacity for a fresh refund.
+        provider.refundError = null;
+        provider.refundStatus = "SUCCEEDED";
+        const retried = await localBoundary.refundPayment(user.id, payment.id, 500, "Confirmed retry");
+        expect(retried.status).toBe("REFUNDED");
       } finally {
         await localBoundary.disconnect();
       }

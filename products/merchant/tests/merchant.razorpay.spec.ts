@@ -6,6 +6,7 @@ import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { AcosIntegrationBoundary } from "../src/integration/AcosIntegrationBoundary.js";
 import type { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "../src/integration/PaymentProvider.js";
+import { RefundOutcomeUnknownError } from "../src/integration/PaymentProvider.js";
 import {
   RazorpayClient,
   RazorpayPaymentEntity,
@@ -27,6 +28,7 @@ class StubRazorpayClient implements RazorpayClient {
   public readonly refundRequests: RazorpayRefundRequest[] = [];
   private readonly payments = new Map<string, RazorpayPaymentEntity>();
   private refundResponse: RazorpayRefundEntity | null = null;
+  private refundError: any = null;
 
   public stubPayment(payment: RazorpayPaymentEntity): void {
     this.payments.set(payment.id, payment);
@@ -34,6 +36,10 @@ class StubRazorpayClient implements RazorpayClient {
 
   public stubRefund(response: RazorpayRefundEntity): void {
     this.refundResponse = response;
+  }
+
+  public stubRefundError(error: any): void {
+    this.refundError = error;
   }
 
   public async createPaymentLink(request: RazorpayPaymentLinkRequest): Promise<RazorpayPaymentLink> {
@@ -50,6 +56,7 @@ class StubRazorpayClient implements RazorpayClient {
 
   public async createRefund(request: RazorpayRefundRequest): Promise<RazorpayRefundEntity> {
     this.refundRequests.push(request);
+    if (this.refundError) throw this.refundError;
     if (!this.refundResponse) throw new Error("No stubbed Razorpay refund");
     return this.refundResponse;
   }
@@ -260,6 +267,54 @@ describe("ACOS Merchant — Razorpay Payment Provider", () => {
       })
     ).rejects.toThrow(/gateway payment id/);
     expect(client.refundRequests).toHaveLength(0);
+  });
+
+  it("surfaces a 4xx refund rejection as a definitive failure", async () => {
+    const error: any = new Error("Razorpay POST /payments/pay_captured/refunds failed with 400: bad request");
+    error.statusCode = 400;
+    client.stubRefundError(error);
+
+    const rejection = provider.refundPayment({
+      paymentId: "payment-1",
+      gatewayPaymentId: "pay_captured",
+      refundRequestId: "req-1",
+      amount: 40,
+      currency: "INR",
+      reason: "Defective item"
+    });
+
+    await expect(rejection).rejects.toThrow(/400/);
+    await expect(rejection).rejects.not.toBeInstanceOf(RefundOutcomeUnknownError);
+  });
+
+  it("classifies a transport failure as an unknown refund outcome", async () => {
+    client.stubRefundError(new TypeError("fetch failed"));
+
+    await expect(
+      provider.refundPayment({
+        paymentId: "payment-1",
+        gatewayPaymentId: "pay_captured",
+        refundRequestId: "req-1",
+        amount: 40,
+        currency: "INR",
+        reason: "Defective item"
+      })
+    ).rejects.toBeInstanceOf(RefundOutcomeUnknownError);
+  });
+
+  it("classifies a success response without a refund id as an unknown outcome", async () => {
+    client.stubRefund({ id: "", amount: 4000, status: "pending", payment_id: "pay_captured" });
+
+    await expect(
+      provider.refundPayment({
+        paymentId: "payment-1",
+        gatewayPaymentId: "pay_captured",
+        refundRequestId: "req-1",
+        amount: 40,
+        currency: "INR",
+        reason: "Defective item"
+      })
+    ).rejects.toBeInstanceOf(RefundOutcomeUnknownError);
   });
 });
 
