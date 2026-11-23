@@ -101,7 +101,7 @@ To guarantee at-least-once domain event delivery and avoid dual-write consistenc
 ---
 
 ## 9. Caching
-* **Invoice Cache**: Caches fetched invoice summaries. Invalidated when `InvoiceIssued` or `InvoicePaid` events are consumed.
+* **Invoice Cache**: Caches fetched invoice summaries. Invalidated when `InvoiceIssued`, `InvoicePaid`, `InvoicePartiallyPaid`, `InvoiceOverpaid`, `InvoiceRefunded` or `InvoiceUpdated` events are consumed, so a status re-derived from the ledger is not served from a stale cached copy.
 * **Dashboard Cache**: Caches dashboard aggregates. Invalidated on any payment/invoice state updates.
 
 ---
