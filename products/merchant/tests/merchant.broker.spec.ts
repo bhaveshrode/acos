@@ -282,6 +282,9 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     }
   });
 
+  // Two boundaries must connect before delivery even starts, and the delivery
+  // poll alone may take 10s. The default 5s per-test limit would kill the test
+  // before that wait could finish, turning a slow run into a false failure.
   it("drains the outbox to the broker and marks the row processed", async () => {
     if (!isBrokerAvailable || !isDbAvailable) return;
 
@@ -342,7 +345,7 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
         await prisma.outboxEvent.deleteMany({ where: { eventType } });
       }
     }
-  });
+  }, 20_000);
 });
 
 function makeEvent(eventName: string, eventId = randomUUID(), aggregateId = "broker-probe"): any {
