@@ -2401,7 +2401,10 @@ export class AcosIntegrationBoundary {
 
     // Idempotency: re-delivered webhooks for a terminal refund are acknowledged.
     if (knownRefund.status === RefundStatus.COMPLETED || (!success && knownRefund.status === RefundStatus.REJECTED)) {
-      this.logger.info("processRefundWebhook: Duplicate webhook for a terminal refund. Ignoring.");
+      this.logger.info("processRefundWebhook: Duplicate webhook for a terminal refund. Ignoring.", {
+        paymentId,
+        refundRequestId
+      });
       const mapper = new PaymentMapper();
       return mapper.map(existing);
     }
