@@ -442,19 +442,27 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
         const webhookDeadline = Date.now() + REFUND_WEBHOOK_WAIT_MS;
         while (Date.now() < webhookDeadline) {
           const webhookEntries = logs.filter((entry) => entry.message.includes("processRefundWebhook:"));
-          if (webhookEntries.length > 0) {
-            refundWebhookOutcome = webhookEntries.some((entry) =>
-              entry.message.includes("Refund marked as COMPLETED")
-            )
+          // "Processing refund webhook..." is logged on entry, before the
+          // transaction picks a branch; only a terminal line can classify the
+          // event.
+          const terminal = webhookEntries.find(
+            (entry) =>
+              entry.message.includes("Refund marked as COMPLETED") ||
+              entry.message.includes("already completed") ||
+              entry.message.includes("Duplicate webhook")
+          );
+          if (terminal) {
+            refundWebhookOutcome = terminal.message.includes("Refund marked as COMPLETED")
               ? "settled the refund"
-              : webhookEntries.some((entry) => entry.message.includes("already completed"))
+              : terminal.message.includes("already completed")
                 ? "delivered after the inline settlement and acknowledged idempotently"
-                : webhookEntries.some((entry) => entry.message.includes("Duplicate webhook"))
-                  ? "delivered as a duplicate and acknowledged"
-                  : "delivered but reached no terminal branch";
+                : "delivered as a duplicate and acknowledged";
             break;
           }
           await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        if (!refundWebhookOutcome && logs.some((entry) => entry.message.includes("processRefundWebhook:"))) {
+          refundWebhookOutcome = `delivered but reached no terminal branch within ${REFUND_WEBHOOK_WAIT_MS / 1000}s`;
         }
       }
 
