@@ -1356,7 +1356,7 @@ export class AcosIntegrationBoundary {
         paymentId: knownRes.value.id.value,
         status: knownRes.value.status
       });
-      return knownRes.value;
+      return new PaymentMapper().map(knownRes.value);
     }
 
     // Gateway I/O stays outside the unit of work so no DB transaction is held
