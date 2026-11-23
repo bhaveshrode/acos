@@ -172,6 +172,8 @@ export class PrismaAccountsReceivableRepository implements IAccountsReceivableRe
         remainingAmount: credit.remainingAmount.toNumber(),
         currency: credit.currency,
         reason: credit.reason,
+        settlementId: credit.settlementId ?? null,
+        invoiceId: credit.invoiceId ?? null,
         createdAt: credit.createdAt
       })),
       collectionActions: row.collectionActions.map((action: any) => ({

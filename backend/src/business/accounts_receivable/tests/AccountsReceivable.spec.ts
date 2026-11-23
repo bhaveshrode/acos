@@ -34,6 +34,7 @@ import { AgingPolicy } from "../services/AgingPolicy.js";
 import { CollectionPolicy } from "../services/CollectionPolicy.js";
 import { CreditAllocationPolicy } from "../services/CreditAllocationPolicy.js";
 import { ReceivablePolicy } from "../services/ReceivablePolicy.js";
+import { refundCustomerCredit } from "../operations/RefundCustomerCredit.js";
 
 import { ReceivableCanBeClosed } from "../specifications/ReceivableCanBeClosed.js";
 import { ReceivableCanBeWrittenOff } from "../specifications/ReceivableCanBeWrittenOff.js";
@@ -190,6 +191,45 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       expect(ar.entries[0].remainingBalance.amount).toBe(100);
       expect(ar.entries[0].isPaid).toBe(false);
       expect(ar.getOutstandingBalance("USDC").amount).toBe(100);
+    });
+
+    it("should refund only the payment's own unapplied credit", () => {
+      const ar = AccountsReceivable.create(accId, orgId, custId).value;
+      const invA = InvoiceId.generate();
+      const invB = InvoiceId.generate();
+      const refundedSettlement = SettlementId.generate();
+      const otherSettlement = SettlementId.generate();
+      const policy = new CreditAllocationPolicy();
+
+      ar.addInvoice(new UniqueEntityID(), invA, Money.create(100, "USDC").value, new Date());
+      ar.addInvoice(new UniqueEntityID(), invB, Money.create(50, "USDC").value, new Date());
+
+      // The refunded payment overpays both invoices: 20 credit on A, 10 on B.
+      ar.applyPayment(new UniqueEntityID(), refundedSettlement, invA, Money.create(120, "USDC").value, policy);
+      ar.applyPayment(new UniqueEntityID(), refundedSettlement, invB, Money.create(60, "USDC").value, policy);
+      // Another payment's overpayment must never fund this refund.
+      ar.applyPayment(new UniqueEntityID(), otherSettlement, invA, Money.create(30, "USDC").value, policy);
+      expect(ar.getCreditBalance("USDC").amount).toBe(60);
+
+      const res = refundCustomerCredit(ar, refundedSettlement, Money.create(30, "USDC").value);
+      expect(res.isSuccess).toBe(true);
+      expect(res.value.consumed.amount).toBe(30);
+      expect(res.value.remainder.amount).toBe(0);
+      expect(res.value.shares).toHaveLength(2);
+      expect(res.value.shares.find((share) => share.invoiceId.equals(invA))!.amount.amount).toBe(20);
+      expect(res.value.shares.find((share) => share.invoiceId.equals(invB))!.amount.amount).toBe(10);
+
+      // Only the refunded payment's credit is gone; its invoice obligations stay settled.
+      expect(ar.getCreditBalance("USDC").amount).toBe(30);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invA))!.remainingBalance.amount).toBe(0);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invB))!.remainingBalance.amount).toBe(0);
+      expect(ar.domainEvents.map((e) => e.eventName)).toContain("CustomerCreditRefunded");
+
+      // Once its credit is consumed, the excess is left for obligation reversal.
+      const more = refundCustomerCredit(ar, refundedSettlement, Money.create(45, "USDC").value);
+      expect(more.value.consumed.amount).toBe(0);
+      expect(more.value.remainder.amount).toBe(45);
+      expect(ar.getCreditBalance("USDC").amount).toBe(30);
     });
 
     it("should allow applying unapplied credit to outstanding invoices", () => {

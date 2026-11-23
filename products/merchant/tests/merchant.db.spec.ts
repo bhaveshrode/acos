@@ -323,6 +323,72 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     await expect(frontend.refundPayment(payment.id, 1, "One dollar too many")).rejects.toThrow(/confirmed payments/i);
   });
 
+  it("should persist overpayment credit attribution and refund it before the obligation", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_overpay_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Overpay Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Overpay Shop", `overpay-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Overpay Olga",
+      customerNumber: `CUST-OVERPAY-${Date.now()}`,
+      primaryContact: { name: "Overpay Olga", email: "olga@example.com" },
+      billingAddress: { line1: "3 Surplus Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-OVERPAY-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Overpaid Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    // 150 collected against a 100 invoice: 50 settles as customer credit
+    const payment = await frontend.collectPayment(invoice.id, 150);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, true);
+
+    const overpaidInvoice = await frontend.getInvoice(invoice.id);
+    expect(overpaidInvoice.status).toBe("OVERPAID");
+
+    let credit = await prisma.receivableCredit.findFirst({ where: { settlementId: payment.id } });
+    expect(credit.amount.toNumber()).toBe(50);
+    expect(credit.remainingAmount.toNumber()).toBe(50);
+    expect(credit.settlementId).toBe(payment.id);
+    expect(credit.invoiceId).toBe(invoice.id);
+
+    // Refunding the overpayment consumes credit only: the invoice stays settled
+    const creditOnly = await frontend.refundPayment(payment.id, 50, "Return the overpayment");
+    expect(creditOnly.status).toBe("CONFIRMED");
+
+    expect((await frontend.getInvoice(invoice.id)).status).toBe("PAID");
+    credit = await prisma.receivableCredit.findFirst({ where: { id: credit.id } });
+    expect(credit.remainingAmount.toNumber()).toBe(0);
+    expect(credit.settlementId).toBe(payment.id);
+    expect(credit.invoiceId).toBe(invoice.id);
+    let arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(0);
+
+    // The rest re-opens the obligation the payment had settled
+    const full = await frontend.refundPayment(payment.id, 100, "Cancel the sale");
+    expect(full.status).toBe("REFUNDED");
+
+    expect((await frontend.getInvoice(invoice.id)).status).toBe("SENT");
+    arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(100);
+    expect(await prisma.refund.count({ where: { paymentId: payment.id } })).toBe(2);
+  });
+
   it("should persist an asynchronous refund request and settle it from the webhook", async () => {
     if (!isDbAvailable) {
       return;

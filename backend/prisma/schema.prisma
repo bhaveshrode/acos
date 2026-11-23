@@ -194,6 +194,8 @@ model ReceivableCredit {
   remainingAmount Decimal  @db.Decimal(18, 4)
   currency        String
   reason          String
+  settlementId    String?
+  invoiceId       String?
   createdAt       DateTime
   account         ReceivableAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 }

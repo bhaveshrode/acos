@@ -30,6 +30,8 @@ export interface AccountsReceivableSnapshot {
     remainingAmount: number;
     currency: string;
     reason: string;
+    settlementId: string | null;
+    invoiceId: string | null;
     createdAt: Date;
   }>;
   collectionActions: Array<{
