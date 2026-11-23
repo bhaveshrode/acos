@@ -842,6 +842,36 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(arRes.value.getOutstandingBalance("USD").amount).toBe(500);
     });
 
+    it("should ignore a re-delivered collection webhook after the payment was refunded", async () => {
+      const payment = await frontend.collectPayment(bobInvoice.id);
+      const queryRes = await boundary.paymentRepository.findById(
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
+      );
+      const gatewayRef = queryRes.value.gatewayReference!.value;
+      await frontend.simulateWebhook(gatewayRef, true);
+
+      const refunded = await frontend.refundPayment(payment.id, 500, "Order returned");
+      expect(refunded.status).toBe("REFUNDED");
+      expect((await frontend.getInvoice(bobInvoice.id)).status).toBe("SENT");
+
+      // The gateway re-delivers payment_link.paid after the refund settled. The
+      // confirmation already happened, so the callback must not confirm the
+      // payment again or reconcile the refunded money back onto the invoice.
+      await frontend.simulateWebhook(gatewayRef, true);
+
+      expect((await frontend.getInvoice(bobInvoice.id)).status).toBe("SENT");
+      const after = await boundary.paymentRepository.findById(
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
+      );
+      expect(after.value.status).toBe("REFUNDED");
+
+      const arRes = await boundary.accountsReceivableRepository.findByCustomer(
+        await import("acos-backend").then(m => m.OrganizationId.from(bobInvoice.organizationId)),
+        await import("acos-backend").then(m => m.CustomerId.from(bobInvoice.customerId))
+      );
+      expect(arRes.value.getOutstandingBalance("USD").amount).toBe(500);
+    });
+
     it("should refund a confirmed payment partially (PAID -> PARTIALLY_PAID, payment CONFIRMED)", async () => {
       const payment = await frontend.collectPayment(bobInvoice.id);
       const queryRes = await boundary.paymentRepository.findById(

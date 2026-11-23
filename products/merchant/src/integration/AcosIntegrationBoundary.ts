@@ -1390,9 +1390,19 @@ export class AcosIntegrationBoundary {
         }
       }
 
-      // Idempotency: Ignore duplicate webhooks if payment is already confirmed
-      if (payment.status === "CONFIRMED") {
-        this.logger.info("processPaymentWebhook: Duplicate webhook received. Payment is already CONFIRMED. Ignoring.");
+      // Idempotency: reconciliation already ran when this payment was confirmed,
+      // so every confirmed-once state ignores re-delivered callbacks. A refunded
+      // payment is no longer CONFIRMED; confirming it again would re-apply the
+      // refunded money to the ledger and flip the invoice back to PAID.
+      const alreadyReconciled =
+        payment.status === "CONFIRMED" ||
+        payment.status === "REFUND_REQUESTED" ||
+        payment.status === "REFUNDED";
+      if (alreadyReconciled) {
+        this.logger.info("processPaymentWebhook: Payment was already confirmed; ignoring re-delivered callback.", {
+          paymentId: payment.id.value,
+          status: payment.status
+        });
         return payment;
       }
 
