@@ -1007,7 +1007,15 @@ export class AcosIntegrationBoundary {
       customer.organizationId,
       customer.id
     );
-    const availableCredit = arRes.isSuccess ? getReceivableCreditBalance(arRes.value, currency).amount : 0;
+
+    // Only a missing account means "no ledger activity, no credit". A database
+    // or hydration failure must not surface as a plausible zero balance.
+    let availableCredit = 0;
+    if (arRes.isSuccess) {
+      availableCredit = getReceivableCreditBalance(arRes.value, currency).amount;
+    } else if (arRes.error.code !== "NOT_FOUND") {
+      throw new Error(`Failed to read receivable ledger: ${arRes.error.message}`);
+    }
 
     return {
       customerId: customer.id.value,

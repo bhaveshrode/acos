@@ -346,6 +346,22 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(balance.availableCredit).toBe(50);
     });
 
+    it("should propagate ledger read failures instead of reporting zero credit", async () => {
+      const created = await frontend.createCustomer(customerPayload);
+      const { Result, ResultError } = await import("acos-backend");
+
+      const repository = boundary.accountsReceivableRepository as any;
+      const originalFindByCustomer = repository.findByCustomer;
+      repository.findByCustomer = async () =>
+        Result.fail(ResultError.unexpected("ledger unavailable"));
+
+      try {
+        await expect(frontend.getCustomerCreditBalance(created.id)).rejects.toThrow(/ledger unavailable/);
+      } finally {
+        repository.findByCustomer = originalFindByCustomer;
+      }
+    });
+
     it("should reject unauthenticated requests to customer routes", async () => {
       frontend.clearSessionToken();
 
