@@ -26,9 +26,9 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
   let frontend: MerchantFrontend;
   let isDbAvailable = false;
 
-  // The webhook commits its reconciliation inside the request, but the cached
-  // copy of the invoice is only cleared once the outbox drain delivers
-  // InvoicePaid, which can trail the response. Poll past that window.
+  // A mutation commits its invoice-state change inside its request, but the
+  // cached copy is only cleared once the outbox drain delivers the resulting
+  // event, which can trail the response. Poll past that window.
   const waitForInvoiceStatus = async (invoiceId: string, status: string, timeoutMs = 5000) => {
     const deadline = Date.now() + timeoutMs;
     let invoice = await frontend.getInvoice(invoiceId);
@@ -292,7 +292,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
     await frontend.simulateWebhook(dbPayment.gatewayReference, true);
 
-    const paidInvoice = await frontend.getInvoice(invoice.id);
+    const paidInvoice = await waitForInvoiceStatus(invoice.id, "PAID");
     expect(paidInvoice.status).toBe("PAID");
 
     // Partial refund of 40: payment returns to CONFIRMED, invoice re-opens
@@ -306,7 +306,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(refundRows[0].reason).toBe("Partial return");
     expect(refundRows[0].organizationId).toBe(biz.id);
 
-    const partialInvoice = await frontend.getInvoice(invoice.id);
+    const partialInvoice = await waitForInvoiceStatus(invoice.id, "PARTIALLY_PAID");
     expect(partialInvoice.status).toBe("PARTIALLY_PAID");
 
     let arEntry = await prisma.receivableEntry.findFirst({
@@ -329,7 +329,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     refundRows = await prisma.refund.findMany({ where: { paymentId: payment.id } });
     expect(refundRows).toHaveLength(2);
 
-    const finalInvoice = await frontend.getInvoice(invoice.id);
+    const finalInvoice = await waitForInvoiceStatus(invoice.id, "SENT");
     expect(finalInvoice.status).toBe("SENT");
 
     arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
@@ -337,7 +337,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     // A fully refunded payment refuses further refunds
     await expect(frontend.refundPayment(payment.id, 1, "One dollar too many")).rejects.toThrow(/confirmed payments/i);
-  });
+  }, 20_000);
 
   it("should persist overpayment credit attribution and refund it before the obligation", async () => {
     if (!isDbAvailable) {
@@ -374,7 +374,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
     await frontend.simulateWebhook(dbPayment.gatewayReference, true);
 
-    const overpaidInvoice = await frontend.getInvoice(invoice.id);
+    const overpaidInvoice = await waitForInvoiceStatus(invoice.id, "OVERPAID");
     expect(overpaidInvoice.status).toBe("OVERPAID");
 
     let credit = await prisma.receivableCredit.findFirst({ where: { settlementId: payment.id } });
@@ -387,7 +387,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const creditOnly = await frontend.refundPayment(payment.id, 50, "Return the overpayment");
     expect(creditOnly.status).toBe("CONFIRMED");
 
-    expect((await frontend.getInvoice(invoice.id)).status).toBe("PAID");
+    expect((await waitForInvoiceStatus(invoice.id, "PAID")).status).toBe("PAID");
     credit = await prisma.receivableCredit.findFirst({ where: { id: credit.id } });
     expect(credit.remainingAmount.toNumber()).toBe(0);
     expect(credit.settlementId).toBe(payment.id);
@@ -399,11 +399,11 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const full = await frontend.refundPayment(payment.id, 100, "Cancel the sale");
     expect(full.status).toBe("REFUNDED");
 
-    expect((await frontend.getInvoice(invoice.id)).status).toBe("SENT");
+    expect((await waitForInvoiceStatus(invoice.id, "SENT")).status).toBe("SENT");
     arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(100);
     expect(await prisma.refund.count({ where: { paymentId: payment.id } })).toBe(2);
-  });
+  }, 20_000);
 
   it("should persist customer credit applied to a second outstanding invoice", async () => {
     if (!isDbAvailable) {
@@ -470,13 +470,13 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const rest = await frontend.applyCreditToInvoice(invoiceB.id);
     expect(rest.amountApplied).toBe(50);
     expect(rest.invoiceStatus).toBe("PAID");
-    expect((await frontend.getInvoice(invoiceB.id)).status).toBe("PAID");
+    expect((await waitForInvoiceStatus(invoiceB.id, "PAID")).status).toBe("PAID");
 
     credit = await prisma.receivableCredit.findFirst({ where: { id: credit.id } });
     expect(credit.remainingAmount.toNumber()).toBe(0);
     arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoiceB.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(0);
-  });
+  }, 20_000);
 
   it("should persist a credit application by settlement and recall it on refund", async () => {
     if (!isDbAvailable) {
@@ -542,8 +542,8 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     // The money comes back from the invoice the credit settled; the invoice
     // the payment settled directly stays paid.
-    expect((await frontend.getInvoice(invoiceA.id)).status).toBe("PAID");
-    expect((await frontend.getInvoice(invoiceB.id)).status).toBe("SENT");
+    expect((await waitForInvoiceStatus(invoiceA.id, "PAID")).status).toBe("PAID");
+    expect((await waitForInvoiceStatus(invoiceB.id, "SENT")).status).toBe("SENT");
 
     const entryA = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoiceA.id } });
     expect(entryA.remainingAmount.toNumber()).toBe(0);
@@ -552,7 +552,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
 
     application = await prisma.receivablePaymentApplication.findFirst({ where: { id: application.id } });
     expect(application.amount.toNumber()).toBe(0);
-  });
+  }, 20_000);
 
   it("serializes concurrent credit applications across independent database connections", async () => {
     if (!isDbAvailable) {
@@ -712,13 +712,13 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     const dbPaymentB = await prisma.payment.findFirst({ where: { invoiceId: invoiceB.id } });
     await frontend.simulateWebhook(dbPaymentB.gatewayReference, true);
 
-    expect((await frontend.getInvoice(invoiceB.id)).status).toBe("PAID");
+    expect((await waitForInvoiceStatus(invoiceB.id, "PAID")).status).toBe("PAID");
     const arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoiceB.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(0);
     const account = await prisma.receivableAccount.findFirst({ where: { customerId: customer.id } });
     const credit = await prisma.receivableCredit.findFirst({ where: { accountId: account.id } });
     expect(credit.remainingAmount.toNumber()).toBe(0);
-  });
+  }, 20_000);
 
   it("reports a customer's credit balance from the persisted ledger", async () => {
     if (!isDbAvailable) {
@@ -834,11 +834,11 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     paymentRow = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
     expect(paymentRow.gatewayPaymentId).toBe("pay_async_1");
 
-    const reopenedInvoice = await frontend.getInvoice(invoice.id);
+    const reopenedInvoice = await waitForInvoiceStatus(invoice.id, "PARTIALLY_PAID");
     expect(reopenedInvoice.status).toBe("PARTIALLY_PAID");
     const arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoice.id } });
     expect(arEntry.remainingAmount.toNumber()).toBe(40);
-  });
+  }, 20_000);
 
   it("serializes concurrent refund reservations across independent database connections", async () => {
     if (!isDbAvailable) {
