@@ -1005,6 +1005,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     class DeferredRefundProvider implements IPaymentProvider {
       public readonly refunds: RefundRequestInput[] = [];
       public refundStatus: "PROCESSING" | "SUCCEEDED" | "FAILED" = "PROCESSING";
+      public confirmStatus: "PROCESSING" | "SUCCEEDED" = "SUCCEEDED";
       public refundGate: Promise<void> | null = null;
       public refundError: Error | null = null;
 
@@ -1026,6 +1027,9 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
 
       public async completePayment(input: PaymentCompletion): Promise<PaymentResponse> {
         if (input.success) {
+          if (this.confirmStatus === "PROCESSING") {
+            return { gatewayReference: input.gatewayReference, status: "PROCESSING" };
+          }
           return { gatewayReference: input.gatewayReference, status: "SUCCEEDED", transactionHash: input.gatewayPaymentId ?? "tx_test" };
         }
         return { gatewayReference: input.gatewayReference, status: "FAILED", errorCode: "DECLINED", errorMessage: "Declined" };
@@ -1138,6 +1142,42 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         const again = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
         expect(again.status).toBe("REFUNDED");
         expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("acknowledges a re-delivered collection webhook after the gateway stops reporting capture", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(localBoundary, "settled-gateway");
+
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 500, "Order returned");
+        expect(refunded.status).toBe("REFUNDED");
+
+        // Razorpay reports a fully refunded payment as `refunded`, so a fresh
+        // gateway check no longer confirms anything.
+        provider.confirmStatus = "PROCESSING";
+
+        const { PaymentId } = await import("acos-backend");
+        const aggRes = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        const again = await localBoundary.processPaymentWebhook(
+          aggRes.value.gatewayReference!.value,
+          true,
+          undefined,
+          undefined,
+          "pay_test_1"
+        );
+
+        // The callback is acknowledged rather than thrown back for retry, and
+        // nothing is re-confirmed or reconciled back onto the invoice.
+        expect(again.status).toBe("REFUNDED");
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("ISSUED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(500);
+        const after = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(after.value.status).toBe("REFUNDED");
       } finally {
         await localBoundary.disconnect();
       }
