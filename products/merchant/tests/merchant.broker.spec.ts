@@ -348,7 +348,7 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
           const latest = (await (probe! as any).xrevrange(
             streamName, "+", "-", "COUNT", 1
           )) as any[];
-          const [entryId, fields] = (latest?.[0] ?? []) as [string?, unknown];
+          const [entryId, fields] = (latest?.[0] ?? []) as [string | undefined, unknown];
           const flat = Array.isArray(fields) ? fields : [];
           const record: Record<string, string> = {};
           for (let i = 0; i + 1 < flat.length; i += 2) {
