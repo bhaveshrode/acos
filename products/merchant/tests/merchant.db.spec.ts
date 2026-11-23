@@ -26,6 +26,19 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
   let frontend: MerchantFrontend;
   let isDbAvailable = false;
 
+  // The webhook commits its reconciliation inside the request, but the cached
+  // copy of the invoice is only cleared once the outbox drain delivers
+  // InvoicePaid, which can trail the response. Poll past that window.
+  const waitForInvoiceStatus = async (invoiceId: string, status: string, timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    let invoice = await frontend.getInvoice(invoiceId);
+    while (invoice?.status !== status && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      invoice = await frontend.getInvoice(invoiceId);
+    }
+    return invoice;
+  };
+
   beforeAll(async () => {
     // 1. Check if database is reachable
     const pg = await import("pg");
@@ -201,7 +214,7 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     await frontend.simulateWebhook(gatewayRef, true);
 
     // Verify invoice status updated to PAID (reconciliation completed)
-    const finalInvoice = await frontend.getInvoice(invoice.id);
+    const finalInvoice = await waitForInvoiceStatus(invoice.id, "PAID");
     expect(finalInvoice.status).toBe("PAID");
 
     // The receivable ledger is written in the reconciliation transaction
@@ -240,7 +253,10 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     });
     expect(idempRec).toBeDefined();
     expect(idempRec.statusCode).toBe(201);
-  });
+    // The status poll may run its full deadline on failure, so the test has to
+    // outlive the helper's window; otherwise a broken reconciliation surfaces
+    // as a Vitest timeout instead of the observed invoice status.
+  }, 20_000);
 
   it("should persist refunds and re-open invoice and receivable balances", async () => {
     if (!isDbAvailable) {
