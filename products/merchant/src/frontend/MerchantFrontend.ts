@@ -118,6 +118,10 @@ export class MerchantFrontend {
     return this.customerClient.getCustomer(id);
   }
 
+  public getCustomerCreditBalance(id: string): Promise<any> {
+    return this.customerClient.getCustomerCreditBalance(id);
+  }
+
   // Invoice operations
   public createInvoice(payload: any): Promise<any> {
     return this.invoiceClient.createInvoice(payload);

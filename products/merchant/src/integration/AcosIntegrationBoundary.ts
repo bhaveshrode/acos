@@ -980,6 +980,50 @@ export class AcosIntegrationBoundary {
     return mapper.map(customer);
   }
 
+  /**
+   * Reports the unapplied credit the customer holds with this merchant, in
+   * the business's default currency. A customer with no ledger activity has
+   * no receivable account and therefore no credit.
+   */
+  public async getCustomerCreditBalance(
+    userId: string,
+    customerId: string
+  ): Promise<{ customerId: string; currency: string; availableCredit: number }> {
+    this.logger.info("getCustomerCreditBalance: Querying customer credit...", { userId, customerId });
+
+    const customerRes = await this.customerRepository.findById(new CustomerId(customerId));
+    if (customerRes.isFailure) {
+      throw new Error(`Customer with ID ${customerId} not found.`);
+    }
+    const customer = customerRes.value;
+
+    await this.verifyBusinessOwnership(userId, customer.organizationId.value);
+
+    const orgRes = await this.organizationRepository.findById(customer.organizationId);
+    if (orgRes.isFailure) throw new Error("Organization not found");
+    const currency = orgRes.value.settings.defaultCurrency.value;
+
+    const arRes = await this.accountsReceivableRepository.findByCustomer(
+      customer.organizationId,
+      customer.id
+    );
+
+    // Only a missing account means "no ledger activity, no credit". A database
+    // or hydration failure must not surface as a plausible zero balance.
+    let availableCredit = 0;
+    if (arRes.isSuccess) {
+      availableCredit = getReceivableCreditBalance(arRes.value, currency).amount;
+    } else if (arRes.error.code !== "NOT_FOUND") {
+      throw new Error(`Failed to read receivable ledger: ${arRes.error.message}`);
+    }
+
+    return {
+      customerId: customer.id.value,
+      currency,
+      availableCredit
+    };
+  }
+
   // ========================================================
   // INVOICE LIFECYCLE MANAGEMENT METHODS
   // ========================================================

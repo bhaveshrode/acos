@@ -312,12 +312,63 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(fetched.customerNumber).toBe("CUST-1001");
     });
 
+    it("should report the customer's unapplied credit after an overpayment", async () => {
+      const created = await frontend.createCustomer(customerPayload);
+
+      // No ledger activity yet: no receivable account, so no credit.
+      const empty = await frontend.getCustomerCreditBalance(created.id);
+      expect(empty.customerId).toBe(created.id);
+      expect(empty.currency).toBe("USD");
+      expect(empty.availableCredit).toBe(0);
+
+      const invoice = await frontend.createInvoice({
+        customerId: created.id,
+        invoiceNumber: "INV-CREDIT-READ-1",
+        currency: "USD",
+        paymentTerms: "NET_30",
+        issueDate: new Date().toISOString(),
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lines: [{ description: "Overpaid project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+      });
+      await frontend.issueInvoice(invoice.id);
+      await frontend.sendInvoice(invoice.id);
+
+      // 150 collected against a 100 invoice leaves 50 of unapplied credit.
+      const payment = await frontend.collectPayment(invoice.id, 150);
+      const queryRes = await boundary.paymentRepository.findById(
+        await import("acos-backend").then(m => m.PaymentId.from(payment.id))
+      );
+      await frontend.simulateWebhook(queryRes.value.gatewayReference!.value, true);
+
+      const balance = await frontend.getCustomerCreditBalance(created.id);
+      expect(balance.customerId).toBe(created.id);
+      expect(balance.currency).toBe("USD");
+      expect(balance.availableCredit).toBe(50);
+    });
+
+    it("should propagate ledger read failures instead of reporting zero credit", async () => {
+      const created = await frontend.createCustomer(customerPayload);
+      const { Result, ResultError } = await import("acos-backend");
+
+      const repository = boundary.accountsReceivableRepository as any;
+      const originalFindByCustomer = repository.findByCustomer;
+      repository.findByCustomer = async () =>
+        Result.fail(ResultError.unexpected("ledger unavailable"));
+
+      try {
+        await expect(frontend.getCustomerCreditBalance(created.id)).rejects.toThrow(/ledger unavailable/);
+      } finally {
+        repository.findByCustomer = originalFindByCustomer;
+      }
+    });
+
     it("should reject unauthenticated requests to customer routes", async () => {
       frontend.clearSessionToken();
 
       await expect(frontend.createCustomer(customerPayload)).rejects.toThrow(/Unauthorized/);
       await expect(frontend.listCustomers()).rejects.toThrow(/Unauthorized/);
       await expect(frontend.getCustomer("any-id")).rejects.toThrow(/Unauthorized/);
+      await expect(frontend.getCustomerCreditBalance("any-id")).rejects.toThrow(/Unauthorized/);
     });
 
     it("should reject registration of duplicate customer number in same business", async () => {
@@ -350,6 +401,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       expect(list).toHaveLength(0);
 
       await expect(frontend.getCustomer(bobCust.id)).rejects.toThrow(/Access Denied|Forbidden/);
+      await expect(frontend.getCustomerCreditBalance(bobCust.id)).rejects.toThrow(/Access Denied|Forbidden/);
     });
   });
 

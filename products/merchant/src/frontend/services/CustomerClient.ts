@@ -40,4 +40,22 @@ export class CustomerClient extends BaseClient {
 
     return response.body;
   }
+
+  public async getCustomerCreditBalance(id: string): Promise<any> {
+    this.ctx.logger.info("Frontend: Fetching customer credit balance...", { id });
+    const headers = this.ctx.getHeaders();
+    const response = await this.ctx.backend.handleRequest(
+      "GET",
+      `/business/customers/${id}/credit-balance`,
+      {},
+      headers
+    );
+
+    if (response.status !== 200) {
+      this.ctx.logger.warn("Frontend: Failed to retrieve customer credit balance", { id, error: response.body });
+      throw new Error(response.body.message || response.body.error || "Get Credit Balance Failed");
+    }
+
+    return response.body;
+  }
 }
