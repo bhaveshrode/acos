@@ -306,6 +306,7 @@ export { PaymentFailed } from "../business/payment/events/PaymentFailed.js";
 export { PaymentProcessingStarted } from "../business/payment/events/PaymentProcessingStarted.js";
 export { PaymentSubmitted } from "../business/payment/events/PaymentSubmitted.js";
 export { RefundRequested } from "../business/payment/events/RefundRequested.js";
+export { approveRefund } from "../business/payment/operations/ApproveRefund.js";
 export { completeRefund } from "../business/payment/operations/CompleteRefund.js";
 export { confirmPayment } from "../business/payment/operations/ConfirmPayment.js";
 export { failPayment } from "../business/payment/operations/FailPayment.js";

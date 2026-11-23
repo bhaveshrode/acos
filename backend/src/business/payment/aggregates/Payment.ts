@@ -444,14 +444,15 @@ export class Payment extends AggregateRoot<PaymentId> {
   }
 
   /**
-   * Rejects a requested refund.
+   * Rejects a refund request. Approved requests are rejected too, so a refund
+   * the gateway was asked to process but declined releases its capacity.
    */
   public rejectRefund(requestId: UniqueEntityID): Result<void> {
     const refund = this.props.refundRequests.get(requestId.value);
     if (!refund) {
       return Result.fail(ResultError.notFound("Refund request not found."));
     }
-    if (refund.status !== RefundStatus.REQUESTED) {
+    if (refund.status !== RefundStatus.REQUESTED && refund.status !== RefundStatus.APPROVED) {
       return Result.fail(ResultError.conflict(`Cannot reject refund in status ${refund.status}.`));
     }
     refund.reject();

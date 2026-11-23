@@ -1,5 +1,12 @@
 import { Money, PaymentMethodType } from "acos-backend";
-import { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "./PaymentProvider.js";
+import {
+  IPaymentProvider,
+  PaymentCompletion,
+  PaymentResponse,
+  RefundOutcomeUnknownError,
+  RefundRequestInput,
+  RefundResponse
+} from "./PaymentProvider.js";
 
 export const RAZORPAY_CURRENCY = "INR";
 const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
@@ -99,7 +106,9 @@ export class RazorpayRestClient implements RazorpayClient {
 
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`Razorpay ${method} ${path} failed with ${response.status}: ${this.describeError(text)}`);
+      const error: any = new Error(`Razorpay ${method} ${path} failed with ${response.status}: ${this.describeError(text)}`);
+      error.statusCode = response.status;
+      throw error;
     }
     return (text ? JSON.parse(text) : {}) as T;
   }
@@ -207,16 +216,27 @@ export class RazorpayPaymentProvider implements IPaymentProvider {
       throw new Error(`RazorpayPaymentProvider rejected the refund amount: ${money.error.message}`);
     }
 
-    const refund = await this.client.createRefund({
-      paymentId: input.gatewayPaymentId,
-      amountMinor: money.value.minorUnits,
-      notes: {
-        paymentId: input.paymentId,
-        refundRequestId: input.refundRequestId ?? ""
+    let refund: RazorpayRefundEntity;
+    try {
+      refund = await this.client.createRefund({
+        paymentId: input.gatewayPaymentId,
+        amountMinor: money.value.minorUnits,
+        notes: {
+          paymentId: input.paymentId,
+          refundRequestId: input.refundRequestId ?? ""
+        }
+      });
+    } catch (err: any) {
+      // A 4xx is a definitive refusal (the request never created a refund).
+      // Anything else — transport failure, 5xx, unparseable body — leaves the
+      // outcome unknown, and the caller must not release the reservation.
+      if (typeof err?.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500) {
+        throw err;
       }
-    });
+      throw new RefundOutcomeUnknownError(`Razorpay refund outcome is unknown: ${err?.message ?? String(err)}`);
+    }
     if (!refund?.id) {
-      throw new Error("Razorpay did not return a refund id.");
+      throw new RefundOutcomeUnknownError("Razorpay did not return a refund id.");
     }
 
     if (refund.status === "failed") {

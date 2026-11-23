@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
 import { Logger, LogEntry, PaymentMethodType } from "acos-backend";
 import type { LogWriter } from "acos-backend";
 import type { IPaymentProvider, PaymentCompletion, PaymentResponse, RefundRequestInput, RefundResponse } from "../src/integration/PaymentProvider.js";
+import { RefundOutcomeUnknownError } from "../src/integration/PaymentProvider.js";
 import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { MerchantConfig } from "../src/configuration/MerchantConfig.js";
@@ -923,6 +924,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       public readonly refunds: RefundRequestInput[] = [];
       public refundStatus: "PROCESSING" | "SUCCEEDED" | "FAILED" = "PROCESSING";
       public refundGate: Promise<void> | null = null;
+      public refundError: Error | null = null;
 
       public get lastRefundRequestId(): string | undefined {
         return this.refunds[this.refunds.length - 1]?.refundRequestId;
@@ -950,6 +952,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       public async refundPayment(input: RefundRequestInput): Promise<RefundResponse> {
         this.refunds.push(input);
         if (this.refundGate) await this.refundGate;
+        if (this.refundError) throw this.refundError;
         return { gatewayRefundReference: `rfnd_${this.refunds.length}`, status: this.refundStatus };
       }
     }
@@ -1155,6 +1158,39 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         const refunded = await localBoundary.refundPayment(user.id, payment.id, 0.1 + 0.2, "Cent split");
         expect(refunded.status).toBe("REFUNDED");
         expect(provider.refunds).toHaveLength(1);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("keeps the reservation pending when the gateway outcome is unknown", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundError = new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "unknown-shop");
+
+        await expect(localBoundary.refundPayment(user.id, payment.id, 500, "Network hiccup")).rejects.toThrow(
+          /outcome is unknown/
+        );
+        expect(provider.refunds).toHaveLength(1);
+
+        // The reservation stays pending, so capacity is not released...
+        const { PaymentId } = await import("acos-backend");
+        const reloaded = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(reloaded.value.status).toBe("REFUND_REQUESTED");
+        expect(reloaded.value.refundRequests).toHaveLength(1);
+        expect(reloaded.value.refundRequests[0].status).toBe("APPROVED");
+
+        // ...and a retry cannot create a second gateway refund.
+        await expect(localBoundary.refundPayment(user.id, payment.id, 500, "Retry")).rejects.toThrow(
+          /cannot exceed payment amount/
+        );
+        expect(provider.refunds).toHaveLength(1);
+
+        // The refund webhook resolves the pending reservation.
+        const settled = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
+        expect(settled.status).toBe("REFUNDED");
       } finally {
         await localBoundary.disconnect();
       }
