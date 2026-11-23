@@ -22,6 +22,7 @@ const PORT = 8090;
 const TUNNEL_METRICS_URL = process.env.RAZORPAY_E2E_TUNNEL_METRICS || "http://127.0.0.1:20241/quicktunnel";
 const PAYMENT_WAIT_MS = 15 * 60 * 1000;
 const REFUND_WAIT_MS = 5 * 60 * 1000;
+const REFUND_WEBHOOK_WAIT_MS = 2 * 60 * 1000;
 const E2E_AMOUNT = 1;
 const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
 const STATE_PATH = process.env.RAZORPAY_E2E_STATE || path.join(os.tmpdir(), "razorpay-e2e-state.json");
@@ -431,11 +432,58 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
       expect(gatewayRefund.amount).toBe(E2E_AMOUNT * 100);
       expect(gatewayRefund.currency).toBe("INR");
 
+      // This account has no pending refund state, so the create-refund
+      // response settles the ledger inline and the signed refund.processed
+      // event can only prove delivery and idempotency. Stay up for a bounded
+      // window and record which handler branch the event took instead of
+      // closing the process the instant the settlement checks pass.
+      let refundWebhookOutcome = "";
+      if (!settledByWebhook) {
+        const webhookDeadline = Date.now() + REFUND_WEBHOOK_WAIT_MS;
+        while (Date.now() < webhookDeadline) {
+          const webhookEntries = logs.filter((entry) => entry.message.includes("processRefundWebhook:"));
+          if (webhookEntries.length > 0) {
+            refundWebhookOutcome = webhookEntries.some((entry) =>
+              entry.message.includes("Refund marked as COMPLETED")
+            )
+              ? "settled the refund"
+              : webhookEntries.some((entry) => entry.message.includes("already completed"))
+                ? "delivered after the inline settlement and acknowledged idempotently"
+                : webhookEntries.some((entry) => entry.message.includes("Duplicate webhook"))
+                  ? "delivered as a duplicate and acknowledged"
+                  : "delivered but reached no terminal branch";
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      publishStepSummary(
+        [
+          "### Razorpay inbound E2E result",
+          "",
+          settledByWebhook
+            ? "- Refund settled by the signed refund.processed webhook."
+            : refundWebhookOutcome
+              ? `- Refund settled inline by the create-refund response; the signed refund.processed webhook was ${refundWebhookOutcome}.`
+              : `- Refund settled inline by the create-refund response; no refund webhook arrived within ${REFUND_WEBHOOK_WAIT_MS / 1000}s.`,
+          "- Payment CONFIRMED then REFUNDED; invoice PAID then SENT; receivable settled then reopened.",
+          ""
+        ].join("\n")
+      );
+
       console.log(
         settledByWebhook
           ? `Refund verified: Razorpay accepted ${gatewayRefund.id} and the signed refund.processed webhook completed it.`
           : `Refund verified: Razorpay processed ${gatewayRefund.id} in the refund response.`
       );
+      if (!settledByWebhook) {
+        console.log(
+          refundWebhookOutcome
+            ? `Refund webhook observed: ${refundWebhookOutcome} for ${gatewayRefund.id}.`
+            : `Refund webhook not observed within ${REFUND_WEBHOOK_WAIT_MS / 1000}s; the create-refund response settled ${gatewayRefund.id}.`
+        );
+      }
       console.log(
         "Inbound E2E verified: payment CONFIRMED then REFUNDED, invoice PAID then SENT, receivable settled then reopened."
       );
