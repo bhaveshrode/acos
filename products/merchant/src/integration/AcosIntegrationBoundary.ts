@@ -165,6 +165,7 @@ export interface BoundaryOptions {
  * Orchestrator acting as the gateway/boundary between Merchant and ACOS subsystems.
  */
 const STALE_REFUND_RESERVATION_MS = 15 * 60 * 1000;
+const REFUND_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 export class AcosIntegrationBoundary {
   private runtime: ACOSRuntime;
@@ -192,6 +193,7 @@ export class AcosIntegrationBoundary {
   private outboxDrainPending = false;
   private outboxRetryTimer: NodeJS.Timeout | null = null;
   private outboxRetryAt = 0;
+  private refundSweepTimer: NodeJS.Timeout | null = null;
   private readonly outboxClaimId = randomUUID();
 
   // Gateway used to collect payments (sandbox simulator unless injected)
@@ -604,6 +606,9 @@ export class AcosIntegrationBoundary {
       } catch (sweepErr: any) {
         this.logger.warn("Startup refund-reservation sweep failed; continuing.", { error: sweepErr.message });
       }
+      // A reservation can only become stale after the startup pass, so keep
+      // sweeping while the process runs.
+      this.scheduleRefundReservationSweep();
 
       this.logger.info("ACOS Integration Boundary connected successfully.");
       return startResult;
@@ -1524,6 +1529,11 @@ export class AcosIntegrationBoundary {
         throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
       }
 
+      // Stamp the row as written under the reserve-before-submit protocol in
+      // the reservation transaction itself, so the stale sweep can tell it
+      // apart from a pre-upgrade row that may already have reached the gateway.
+      await this.stampRefundReservationProtocol(refundId.value);
+
       const events = payment.domainEvents;
       payment.clearDomainEvents();
       await this.eventBus.publishAll(events);
@@ -1551,12 +1561,16 @@ export class AcosIntegrationBoundary {
     } catch (err) {
       if (err instanceof RefundOutcomeUnknownError) {
         // The gateway may have accepted the refund; releasing the reservation
-        // could let a retry create a second gateway refund.
+        // could let a retry create a second gateway refund. The refund is
+        // pending, not failed — report it as pending so the caller does not
+        // retry, and let the refund webhook or manual reconciliation settle it.
         this.logger.warn(
           "refundPayment: Gateway outcome unknown; keeping the refund reservation pending for the refund webhook or manual reconciliation.",
           { paymentId, refundId: refundId.value, error: err.message }
         );
-        throw err;
+        const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+        const pending = reloadRes.isSuccess ? reloadRes.value : reservation;
+        return new PaymentMapper().map(pending);
       }
       await this.releaseRefundReservation(paymentId, refundId);
       throw err;
@@ -1579,6 +1593,10 @@ export class AcosIntegrationBoundary {
     }
 
     const payment = await this.withinTransaction(async () => {
+      // The refund webhook may settle this reservation concurrently; the row
+      // lock makes the status check below authoritative.
+      await this.lockPaymentForRefund(paymentId);
+
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
         throw new Error(`Payment with ID ${paymentId} not found.`);
@@ -1629,6 +1647,17 @@ export class AcosIntegrationBoundary {
   }
 
   /**
+   * Marks a refund row as written under the reserve-before-submit protocol.
+   * Rows that predate the protocol keep the column default, so the sweep never
+   * releases a legacy REQUESTED refund whose gateway call may already have run.
+   */
+  private async stampRefundReservationProtocol(refundId: string): Promise<void> {
+    const db = this.dbClient;
+    if (!db || typeof db.$executeRawUnsafe !== "function") return;
+    await db.$executeRawUnsafe('UPDATE "Refund" SET "submissionProtocol" = 1 WHERE id = $1', refundId);
+  }
+
+  /**
    * Transitions the reservation to APPROVED before the gateway call. After a
    * crash, REQUESTED refunds provably never reached the gateway, while
    * APPROVED refunds may have, so only the former can be released by the
@@ -1636,6 +1665,10 @@ export class AcosIntegrationBoundary {
    */
   private async markRefundSubmitted(paymentId: string, refundId: UniqueEntityID): Promise<void> {
     await this.withinTransaction(async () => {
+      // Serialize with the stale-reservation sweep so it cannot reject this
+      // reservation between the reload and the save.
+      await this.lockPaymentForRefund(paymentId);
+
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
         throw new Error(`Payment with ID ${paymentId} not found.`);
@@ -1663,6 +1696,10 @@ export class AcosIntegrationBoundary {
   private async releaseRefundReservation(paymentId: string, refundId: UniqueEntityID): Promise<void> {
     try {
       await this.withinTransaction(async () => {
+        // Serialize with the sweep and the submission marker so the reload
+        // below sees a settled status.
+        await this.lockPaymentForRefund(paymentId);
+
         const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
         if (reloadRes.isFailure) {
           this.logger.warn("refundPayment: Could not reload payment to release the refund reservation.", {
@@ -1719,12 +1756,19 @@ export class AcosIntegrationBoundary {
     const cutoff = new Date(Date.now() - maxAgeMs);
 
     const staleRequested = await this.prismaClient.refund.findMany({
-      where: { status: "REQUESTED", createdAt: { lt: cutoff } }
+      // Only reservations written under the reserve-before-submit protocol are
+      // safe to release: a legacy REQUESTED row may already have reached the
+      // gateway and keeps the column default.
+      where: { status: "REQUESTED", createdAt: { lt: cutoff }, submissionProtocol: 1 }
     });
 
     let released = 0;
     for (const row of staleRequested) {
       await this.withinTransaction(async () => {
+        // Serialize with the submission marker: if a worker is approving this
+        // reservation right now, the reload below sees APPROVED and skips it.
+        await this.lockPaymentForRefund(row.paymentId);
+
         const paymentRes = await this.paymentRepository.findById(new PaymentId(row.paymentId));
         if (paymentRes.isFailure) {
           this.logger.warn("sweepStaleRefundReservations: payment not found for a stale refund.", {
@@ -1767,13 +1811,79 @@ export class AcosIntegrationBoundary {
       where: { status: "APPROVED", createdAt: { lt: cutoff } }
     });
     for (const row of unresolved) {
-      this.logger.warn("sweepStaleRefundReservations: an APPROVED refund is unresolved and needs reconciliation.", {
-        refundId: row.id,
-        paymentId: row.paymentId
-      });
+      this.logger.warn(
+        "sweepStaleRefundReservations: an APPROVED refund is unresolved and needs reconciliation. Verify with the gateway that no refund exists for this request id, then call releaseUnsubmittedRefundReservation.",
+        { refundId: row.id, paymentId: row.paymentId }
+      );
     }
 
     return released;
+  }
+
+  /** Re-runs the stale-reservation sweep while the process is up. */
+  private scheduleRefundReservationSweep(): void {
+    if (!this.prismaClient || this.refundSweepTimer) return;
+    this.refundSweepTimer = setInterval(() => {
+      this.sweepStaleRefundReservations().catch((err: any) =>
+        this.logger.warn("Periodic refund-reservation sweep failed.", { error: err.message })
+      );
+    }, REFUND_SWEEP_INTERVAL_MS);
+    this.refundSweepTimer.unref?.();
+  }
+
+  /**
+   * Operator recovery for an APPROVED reservation whose gateway call never
+   * started (the process stopped between the submission marker and the gateway
+   * request) — a crash the automatic sweep deliberately never releases.
+   * The caller MUST first confirm against the gateway that no refund exists
+   * for this request id: for Razorpay, list the payment's refunds and check the
+   * `notes.refundRequestId` echoed on each one. Returns true when the
+   * reservation was released and its capacity reclaimed.
+   */
+  public async releaseUnsubmittedRefundReservation(paymentId: string, refundRequestId: string): Promise<boolean> {
+    return this.withinTransaction(async () => {
+      await this.lockPaymentForRefund(paymentId);
+
+      const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      if (reloadRes.isFailure) {
+        this.logger.warn("releaseUnsubmittedRefundReservation: payment not found.", { paymentId, refundRequestId });
+        return false;
+      }
+      const payment = reloadRes.value;
+
+      const refund = payment.refundRequests.find((r) => r.id.value === refundRequestId);
+      if (!refund || (refund.status !== RefundStatus.REQUESTED && refund.status !== RefundStatus.APPROVED)) {
+        this.logger.warn("releaseUnsubmittedRefundReservation: refund is not open.", {
+          paymentId,
+          refundRequestId,
+          status: refund?.status ?? null
+        });
+        return false;
+      }
+
+      const rejectRes = rejectRefund(payment, new UniqueEntityID(refundRequestId));
+      if (rejectRes.isFailure) {
+        this.logger.warn("releaseUnsubmittedRefundReservation: failed to reject the reservation.", {
+          paymentId,
+          refundRequestId,
+          error: rejectRes.error.message
+        });
+        return false;
+      }
+
+      const saveRes = await this.paymentRepository.save(payment);
+      if (saveRes.isFailure) {
+        throw new Error(`Failed to save payment aggregate: ${saveRes.error.message}`);
+      }
+      const events = payment.domainEvents;
+      payment.clearDomainEvents();
+      await this.eventBus.publishAll(events);
+      this.logger.info("releaseUnsubmittedRefundReservation: released an unsubmitted refund reservation.", {
+        paymentId,
+        refundRequestId
+      });
+      return true;
+    });
   }
 
   /**
@@ -1938,6 +2048,10 @@ export class AcosIntegrationBoundary {
     }
 
     const payment = await this.withinTransaction(async () => {
+      // The synchronous refund response may settle this refund concurrently;
+      // the row lock makes the status re-check below authoritative.
+      await this.lockPaymentForRefund(paymentId);
+
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
         throw new Error(`Payment with ID ${paymentId} not found.`);
@@ -2247,6 +2361,10 @@ export class AcosIntegrationBoundary {
    * Gracefully shuts down ACOS subsystems.
    */
   public async disconnect(): Promise<void> {
+    if (this.refundSweepTimer) {
+      clearInterval(this.refundSweepTimer);
+      this.refundSweepTimer = null;
+    }
     if (this.outboxRetryTimer) {
       clearTimeout(this.outboxRetryTimer);
       this.outboxRetryTimer = null;

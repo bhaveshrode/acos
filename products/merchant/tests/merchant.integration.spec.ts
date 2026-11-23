@@ -1170,12 +1170,12 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       try {
         const { user, payment } = await setupConfirmedPayment(localBoundary, "unknown-shop");
 
-        await expect(localBoundary.refundPayment(user.id, payment.id, 500, "Network hiccup")).rejects.toThrow(
-          /outcome is unknown/
-        );
+        // The refund is pending, not failed: the caller must not retry.
+        const pending = await localBoundary.refundPayment(user.id, payment.id, 500, "Network hiccup");
+        expect(pending.status).toBe("REFUND_REQUESTED");
         expect(provider.refunds).toHaveLength(1);
 
-        // The reservation stays pending, so capacity is not released...
+        // The reservation stays APPROVED, so capacity is not released...
         const { PaymentId } = await import("acos-backend");
         const reloaded = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
         expect(reloaded.value.status).toBe("REFUND_REQUESTED");
@@ -1191,6 +1191,36 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         // The refund webhook resolves the pending reservation.
         const settled = await localBoundary.processRefundWebhook(payment.id, provider.lastRefundRequestId!, true);
         expect(settled.status).toBe("REFUNDED");
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("releases an unsubmitted reservation after the gateway confirms it never saw the refund", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundError = new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, payment } = await setupConfirmedPayment(localBoundary, "recover-shop");
+        const pending = await localBoundary.refundPayment(user.id, payment.id, 500, "Lost connection");
+        expect(pending.status).toBe("REFUND_REQUESTED");
+
+        // The operator verified against the gateway that no refund exists for
+        // the request id, so the reservation is safe to release.
+        const { PaymentId } = await import("acos-backend");
+        const before = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        const requestId = before.value.refundRequests[0].id.value;
+        expect(await localBoundary.releaseUnsubmittedRefundReservation(payment.id, requestId)).toBe(true);
+
+        const after = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(after.value.status).toBe("CONFIRMED");
+        expect(after.value.refundRequests[0].status).toBe("REJECTED");
+
+        // Releasing the reservation restores the capacity for a fresh refund.
+        provider.refundError = null;
+        provider.refundStatus = "SUCCEEDED";
+        const retried = await localBoundary.refundPayment(user.id, payment.id, 500, "Confirmed retry");
+        expect(retried.status).toBe("REFUNDED");
       } finally {
         await localBoundary.disconnect();
       }

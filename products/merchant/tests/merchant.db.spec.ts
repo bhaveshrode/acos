@@ -10,6 +10,7 @@ import {
 } from "../src/integration/AcosIntegrationBoundary.js";
 import { MerchantBackend } from "../src/backend/MerchantBackend.js";
 import { MerchantFrontend } from "../src/frontend/MerchantFrontend.js";
+import { RefundOutcomeUnknownError } from "../src/integration/PaymentProvider.js";
 import { PrismaClient } from "@prisma/client";
 
 describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
@@ -474,6 +475,91 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     } finally {
       (boundary as any).paymentProvider = originalProvider;
       await secondBoundary.disconnect();
+    }
+  });
+
+  it("sweeps stale reservations written under the reserve-before-submit protocol only", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `refund_sweep_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Refund Sweep Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Sweep Shop", `refund-sweep-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Sweep Sam",
+      customerNumber: `CUST-SWEEP-${Date.now()}`,
+      primaryContact: { name: "Sweep Sam", email: "sam-sweep@example.com" },
+      billingAddress: { line1: "4 Sweep Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-SWEEP-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Sweep Services", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    const payment = await frontend.collectPayment(invoice.id);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await boundary.processPaymentWebhook(dbPayment.gatewayReference, true, undefined, undefined, "pay_sweep_1");
+
+    const originalProvider = (boundary as any).paymentProvider;
+    (boundary as any).paymentProvider = {
+      refundPayment: async () => {
+        throw new RefundOutcomeUnknownError("Razorpay refund outcome is unknown: connection reset");
+      }
+    };
+    try {
+      const pending = await frontend.refundPayment(payment.id, 40, "Sweep probe");
+      expect(pending.status).toBe("REFUND_REQUESTED");
+
+      const reserved = await prisma.refund.findFirst({ where: { paymentId: payment.id } });
+      expect(reserved.status).toBe("APPROVED");
+      expect(reserved.submissionProtocol).toBe(1);
+
+      // Simulate a crash between the reservation commit and the submission
+      // marker: the row is provably never submitted and can be reclaimed.
+      const staleCreatedAt = new Date(Date.now() - 20 * 60 * 1000);
+      await prisma.refund.update({
+        where: { id: reserved.id },
+        data: { status: "REQUESTED", createdAt: staleCreatedAt }
+      });
+
+      expect(await boundary.sweepStaleRefundReservations()).toBe(1);
+      const released = await prisma.refund.findUnique({ where: { id: reserved.id } });
+      expect(released.status).toBe("REJECTED");
+      const releasedPayment = await prisma.payment.findUnique({ where: { id: dbPayment.id } });
+      expect(releasedPayment.status).toBe("CONFIRMED");
+
+      // A pre-upgrade row keeps the column default: it may already have
+      // reached the gateway, so the sweep must never release it automatically.
+      const legacy = await prisma.refund.create({
+        data: {
+          id: `legacy_refund_${Date.now()}`,
+          paymentId: dbPayment.id,
+          organizationId: dbPayment.organizationId,
+          invoiceId: invoice.id,
+          amount: 10,
+          currency: "USD",
+          status: "REQUESTED",
+          reason: "Legacy reservation",
+          createdAt: staleCreatedAt
+        }
+      });
+      expect(legacy.submissionProtocol).toBe(0);
+      expect(await boundary.sweepStaleRefundReservations()).toBe(0);
+      const untouched = await prisma.refund.findUnique({ where: { id: legacy.id } });
+      expect(untouched.status).toBe("REQUESTED");
+    } finally {
+      (boundary as any).paymentProvider = originalProvider;
     }
   });
 

@@ -221,6 +221,37 @@ describe("Payment Bounded Context Unit Tests (Tasks 15.2 - 15.5)", () => {
       expect(payment.status).toBe(PaymentStatus.CONFIRMED);
     });
 
+    it("should return to CONFIRMED when a rejected refund leaves only completed refunds", () => {
+      const payment = Payment.create(
+        PaymentId.generate(),
+        orgId,
+        custId,
+        payRef,
+        payAmount,
+        payMethod,
+        invId,
+        allocAmount
+      ).value;
+
+      payment.confirm(new UniqueEntityID(), TransactionHash.create("0x" + "d".repeat(64)).value, ConfirmationCount.create(1).value);
+
+      // Complete a partial refund: the payment returns to CONFIRMED
+      const completedId = new UniqueEntityID();
+      expect(payment.requestRefund(completedId, Money.create(40, "USDC").value, "Partial return").isSuccess).toBe(true);
+      expect(payment.completeRefund(completedId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
+
+      // A later refund the gateway declines must not leave the payment stuck in
+      // REFUND_REQUESTED: the completed refund is not an open request.
+      const declinedId = new UniqueEntityID();
+      expect(payment.requestRefund(declinedId, Money.create(60, "USDC").value, "Remaining return").isSuccess).toBe(true);
+      expect(payment.approveRefund(declinedId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.REFUND_REQUESTED);
+
+      expect(payment.rejectRefund(declinedId).isSuccess).toBe(true);
+      expect(payment.status).toBe(PaymentStatus.CONFIRMED);
+    });
+
     it("should return to CONFIRMED after a partial refund completes and to REFUNDED after a full refund", () => {
       const payment = Payment.create(
         PaymentId.generate(),

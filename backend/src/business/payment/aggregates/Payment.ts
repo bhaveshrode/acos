@@ -459,7 +459,9 @@ export class Payment extends AggregateRoot<PaymentId> {
 
     let activeRefunds = 0;
     this.props.refundRequests.forEach((req) => {
-      if (req.status === RefundStatus.REQUESTED || req.status === RefundStatus.APPROVED || req.status === RefundStatus.COMPLETED) {
+      // Only open refunds keep the payment in REFUND_REQUESTED; completed
+      // refunds already released their share of the payment.
+      if (req.status === RefundStatus.REQUESTED || req.status === RefundStatus.APPROVED) {
         activeRefunds++;
       }
     });
