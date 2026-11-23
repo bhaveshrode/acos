@@ -7,6 +7,7 @@ import { Mediator } from "acos-backend/application";
 import { SubsystemDescriptor, RuntimeFactory } from "acos-runtime";
 import { PrismaClient } from "@prisma/client";
 import {
+  BROKER_DEFAULT_STREAM,
   brokerConsumerGroup,
   RedisStreamEventBus
 } from "../src/adapters/messaging/event-bus/RedisStreamEventBus.js";
@@ -282,9 +283,10 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     }
   });
 
-  // Two boundaries must connect before delivery even starts, and the delivery
-  // poll alone may take 10s. The default 5s per-test limit would kill the test
-  // before that wait could finish, turning a slow run into a false failure.
+  // Two boundaries must connect before delivery even starts, and a slow CI run
+  // can stall the receiving replica well past the default 5s. Waiting 20s inside
+  // a 30s cap rides out a transient stall; the delivery state captured on
+  // timeout tells a stalled read apart from a lost entry.
   it("drains the outbox to the broker and marks the row processed", async () => {
     if (!isBrokerAvailable || !isDbAvailable) return;
 
@@ -334,7 +336,49 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
       expect(after.processed).toBe(true);
       expect(after.lockedBy).toBeNull();
 
-      await waitFor(() => received.length === 1, 10_000);
+      // A stalled read and a lost entry look identical from here, so a timeout
+      // reports what the stream and the receiving group actually saw.
+      const describeDeliveryState = async (): Promise<string> => {
+        const streamName = BROKER_DEFAULT_STREAM;
+        const groupName = brokerConsumerGroup(`${namespace}-outbox-b`);
+        const parts: string[] = [];
+
+        try {
+          parts.push(`stream length=${await probe!.xlen(streamName)}`);
+          const latest = (await (probe! as any).xrevrange(
+            streamName, "+", "-", "COUNT", 1
+          )) as any[];
+          const [entryId, fields] = (latest?.[0] ?? []) as [string?, unknown];
+          const flat = Array.isArray(fields) ? fields : [];
+          const record: Record<string, string> = {};
+          for (let i = 0; i + 1 < flat.length; i += 2) {
+            record[String(flat[i])] = String(flat[i + 1]);
+          }
+          parts.push(
+            `last entry=${entryId ?? "none"} eventType=${record.eventType ?? "?"} eventId=${record.eventId ?? "?"}`
+          );
+        } catch (err: any) {
+          parts.push(`stream unreadable: ${err?.message ?? err}`);
+        }
+
+        try {
+          const pending = (await probe!.xpending(streamName, groupName)) as any[];
+          parts.push(`group ${groupName} pending=${Number(pending?.[0] ?? 0)}`);
+        } catch (err: any) {
+          parts.push(`group ${groupName} unreadable: ${err?.message ?? err}`);
+        }
+
+        try {
+          const current = await prisma.outboxEvent.findUnique({ where: { id: row.id } });
+          parts.push(`row processed=${current?.processed} lockedBy=${current?.lockedBy ?? "none"}`);
+        } catch (err: any) {
+          parts.push(`row unreadable: ${err?.message ?? err}`);
+        }
+
+        return parts.join("; ");
+      };
+
+      await waitFor(() => received.length === 1, 20_000, describeDeliveryState);
       expect(received).toEqual([eventType]);
     } finally {
       boundaryB.eventBus.unsubscribe(eventType, handler);
@@ -345,7 +389,7 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
         await prisma.outboxEvent.deleteMany({ where: { eventType } });
       }
     }
-  }, 20_000);
+  }, 30_000);
 });
 
 function makeEvent(eventName: string, eventId = randomUUID(), aggregateId = "broker-probe"): any {
@@ -364,12 +408,14 @@ function makeEvent(eventName: string, eventId = randomUUID(), aggregateId = "bro
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 5_000
+  timeoutMs = 5_000,
+  describeState?: () => Promise<string>
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error("Timed out waiting for broker delivery");
+  const state = describeState ? ` (${await describeState()})` : "";
+  throw new Error(`Timed out waiting for broker delivery${state}`);
 }
