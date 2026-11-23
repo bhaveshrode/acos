@@ -21,6 +21,7 @@ export * from "./operations/ApplyReceivablePayment.js";
 export * from "./operations/GetReceivableCreditBalance.js";
 export * from "./operations/OpenReceivableAccount.js";
 export * from "./operations/RegisterInvoiceObligation.js";
+export * from "./operations/ReverseSettlementApplications.js";
 export * from "./repositories/IAccountsReceivableRepository.js";
 export * from "./services/AgingPolicy.js";
 export * from "./services/CollectionPolicy.js";

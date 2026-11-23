@@ -23,7 +23,8 @@ export class AccountsReceivableSerializer {
         invoiceId: application.invoiceId.value,
         amount: application.appliedAmount.amount,
         currency: application.appliedAmount.currency,
-        appliedAt: application.appliedAt
+        appliedAt: application.appliedAt,
+        fundedByCredit: application.fundedByCredit
       })),
       customerCredits: ar.customerCredits.map((credit) => ({
         id: credit.id.value,

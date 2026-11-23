@@ -36,6 +36,7 @@ import { CreditAllocationPolicy } from "../services/CreditAllocationPolicy.js";
 import { ReceivablePolicy } from "../services/ReceivablePolicy.js";
 import { refundCustomerCredit } from "../operations/RefundCustomerCredit.js";
 import { applyCustomerCredit } from "../operations/ApplyCustomerCredit.js";
+import { reverseSettlementApplications } from "../operations/ReverseSettlementApplications.js";
 
 import { ReceivableCanBeClosed } from "../specifications/ReceivableCanBeClosed.js";
 import { ReceivableCanBeWrittenOff } from "../specifications/ReceivableCanBeWrittenOff.js";
@@ -231,6 +232,74 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       expect(more.value.consumed.amount).toBe(0);
       expect(more.value.remainder.amount).toBe(45);
       expect(ar.getCreditBalance("USDC").amount).toBe(30);
+    });
+
+    it("should record where applied credit settled so a refund can recall it", () => {
+      const ar = AccountsReceivable.create(accId, orgId, custId).value;
+      const invA = InvoiceId.generate();
+      const invB = InvoiceId.generate();
+      const settlement = SettlementId.generate();
+      const policy = new CreditAllocationPolicy();
+
+      ar.addInvoice(new UniqueEntityID(), invA, Money.create(100, "USDC").value, new Date());
+      ar.addInvoice(new UniqueEntityID(), invB, Money.create(80, "USDC").value, new Date());
+
+      // 120 against an 80 invoice: 80 applied, 20 left as credit for settlement S.
+      ar.applyPayment(new UniqueEntityID(), settlement, invB, Money.create(120, "USDC").value, policy);
+      expect(ar.paymentApplications).toHaveLength(1);
+      expect(ar.getCreditBalance("USDC").amount).toBe(20);
+
+      const res = applyCustomerCredit(ar, invA, Money.create(20, "USDC").value);
+      expect(res.isSuccess).toBe(true);
+
+      const creditApplication = ar.paymentApplications.find((application) => application.invoiceId.equals(invA));
+      expect(creditApplication).toBeDefined();
+      expect(creditApplication!.settlementId.equals(settlement)).toBe(true);
+      expect(creditApplication!.appliedAmount.amount).toBe(20);
+      expect(creditApplication!.fundedByCredit).toBe(true);
+      expect(ar.paymentApplications).toHaveLength(2);
+    });
+
+    it("should reverse a settlement's applications invoice by invoice, most recent first", () => {
+      const ar = AccountsReceivable.create(accId, orgId, custId).value;
+      const invA = InvoiceId.generate();
+      const invB = InvoiceId.generate();
+      const refundedSettlement = SettlementId.generate();
+      const otherSettlement = SettlementId.generate();
+      const policy = new CreditAllocationPolicy();
+
+      ar.addInvoice(new UniqueEntityID(), invA, Money.create(100, "USDC").value, new Date());
+      ar.addInvoice(new UniqueEntityID(), invB, Money.create(80, "USDC").value, new Date());
+
+      // 120 settles invA (100) and leaves 20 of credit; the credit then settles invB.
+      ar.applyPayment(new UniqueEntityID(), refundedSettlement, invA, Money.create(120, "USDC").value, policy);
+      applyCustomerCredit(ar, invB, Money.create(20, "USDC").value);
+      // Another payment's money on invB must never be returned by this refund.
+      ar.applyPayment(new UniqueEntityID(), otherSettlement, invB, Money.create(10, "USDC").value, policy);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invB))!.remainingBalance.amount).toBe(50);
+
+      const res = reverseSettlementApplications(ar, refundedSettlement, Money.create(120, "USDC").value);
+      expect(res.isSuccess).toBe(true);
+      expect(res.value.reversed.amount).toBe(120);
+      expect(res.value.remainder.amount).toBe(0);
+      expect(res.value.shares.find((share) => share.invoiceId.equals(invA))!.amount.amount).toBe(100);
+      expect(res.value.shares.find((share) => share.invoiceId.equals(invB))!.amount.amount).toBe(20);
+      // The credit-funded application unwinds before the settlement's own money.
+      expect(res.value.shares.map((share) => share.invoiceId.value)).toEqual([invB.value, invA.value]);
+
+      // Both invoices re-open; the other settlement's application still stands.
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invA))!.remainingBalance.amount).toBe(100);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invB))!.remainingBalance.amount).toBe(70);
+      const otherApplication = ar.paymentApplications.find((application) =>
+        application.settlementId.equals(otherSettlement)
+      );
+      expect(otherApplication!.appliedAmount.amount).toBe(10);
+
+      // Reversed applications cannot be returned twice.
+      const again = reverseSettlementApplications(ar, refundedSettlement, Money.create(10, "USDC").value);
+      expect(again.value.reversed.amount).toBe(0);
+      expect(again.value.remainder.amount).toBe(10);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invA))!.remainingBalance.amount).toBe(100);
     });
 
     it("should allow applying unapplied credit to outstanding invoices", () => {

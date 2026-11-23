@@ -75,6 +75,15 @@ export interface CreditRefundResult {
   shares: CreditRefundShare[];
 }
 
+export interface ApplicationReversalResult {
+  /** Applied money actually returned to the payer. */
+  reversed: Money;
+  /** Part of the request no application of this settlement could cover. */
+  remainder: Money;
+  /** Reversed applications grouped by the invoice they had settled. */
+  shares: CreditRefundShare[];
+}
+
 /**
  * Aggregate Root representing the financial and collection state of a customer.
  */
@@ -365,6 +374,20 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
     credit.consume(amount);
     entry.applyPayment(amount);
 
+    // Credit is money a specific payment left behind; record the invoice it now
+    // settles so refunding that payment can recall it from this entry.
+    if (credit.settlementId) {
+      this.props.paymentApplications.push(
+        new PaymentApplication(new UniqueEntityID(), {
+          settlementId: credit.settlementId,
+          invoiceId,
+          appliedAmount: amount,
+          appliedAt: new Date(),
+          fundedByCredit: true
+        })
+      );
+    }
+
     this.props.updatedAt = new Date();
     this.addDomainEvent(new CustomerCreditApplied(this.id.value, invoiceId, amount));
     this.addDomainEvent(new OutstandingBalanceUpdated(this.id.value, this.getOutstandingBalance(amount.currency)));
@@ -425,6 +448,65 @@ export class AccountsReceivable extends AggregateRoot<ReceivableAccountId> {
 
     return Result.ok({
       consumed: Money.create(consumedTotal, amount.currency).value,
+      remainder: Money.create(remaining, amount.currency).value,
+      shares: Array.from(shares.values())
+    });
+  }
+
+  /**
+   * Returns money a settlement left applied to invoice obligations, re-opening
+   * each invoice it had settled. Unapplied credit must be returned through
+   * `refundCredit` before an invoice is re-opened.
+   *
+   * Credit-funded applications first: credit a payment leaves behind is money
+   * the payment never applied directly, so a refund recalls it from the invoice
+   * that spent the credit instead of re-opening the invoice the payment settled
+   * directly, which is legitimately paid.
+   */
+  public reverseApplications(settlementId: SettlementId, amount: Money): Result<ApplicationReversalResult> {
+    const editCheck = this.ensureMutable();
+    if (editCheck.isFailure) return Result.fail(editCheck.error);
+    if (amount.amount <= 0) {
+      return Result.fail(ResultError.conflict("Refund amount must be positive."));
+    }
+
+    const candidates = this.props.paymentApplications
+      .filter(
+        (application) =>
+          application.settlementId.equals(settlementId) &&
+          application.appliedAmount.currency === amount.currency &&
+          application.appliedAmount.amount > 0
+      )
+      .sort(
+        (a, b) =>
+          Number(b.fundedByCredit) - Number(a.fundedByCredit) ||
+          b.appliedAt.getTime() - a.appliedAt.getTime()
+      );
+
+    let remaining = amount.amount;
+    const shares = new Map<string, CreditRefundShare>();
+    for (const application of candidates) {
+      if (remaining <= 0) break;
+      const chunk = Money.create(Math.min(remaining, application.appliedAmount.amount), amount.currency).value;
+
+      const refundRes = this.applyRefund(application.invoiceId, chunk);
+      if (refundRes.isFailure) return Result.fail(refundRes.error);
+      application.reverse(chunk);
+      remaining -= chunk.amount;
+
+      const existing = shares.get(application.invoiceId.value);
+      if (existing) {
+        existing.amount = Money.create(existing.amount.amount + chunk.amount, amount.currency).value;
+      } else {
+        shares.set(application.invoiceId.value, {
+          invoiceId: application.invoiceId,
+          amount: chunk
+        });
+      }
+    }
+
+    return Result.ok({
+      reversed: Money.create(amount.amount - remaining, amount.currency).value,
       remainder: Money.create(remaining, amount.currency).value,
       shares: Array.from(shares.values())
     });

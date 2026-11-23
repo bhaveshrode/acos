@@ -52,9 +52,9 @@ import {
   openReceivableAccount,
   registerInvoiceObligation,
   applyReceivablePayment,
-  applyRefund,
   applyCustomerCredit,
   refundCustomerCredit,
+  reverseSettlementApplications,
   getReceivableCreditBalance,
   requestRefund,
   completeRefund,
@@ -2175,29 +2175,36 @@ export class AcosIntegrationBoundary {
       addInvoiceRefund(invoice, share.amount.amount);
     }
 
-    // 2. Re-open the obligations the payment actually settled.
-    let remainingRefund = remainderMoney.amount;
-    for (const allocation of payment.allocations) {
-      // Refund requests are payment-level; distribute the refunded value
-      // across allocations (the persisted merchant payment has one).
-      const allocationRefund = Math.min(remainingRefund, allocation.allocatedAmount.amount);
-      if (allocationRefund <= 0) break;
-      remainingRefund -= allocationRefund;
-
-      const invoice = await this.loadReversalInvoice(
-        payment,
-        allocation.invoiceId,
-        allocation.allocatedAmount.currency,
-        anchorInvoice.customerId
+    // 2. Return money the payment applied to invoice obligations, including
+    // credit a later application moved onto another invoice. The ledger knows
+    // every application by settlement, so the right invoices re-open.
+    if (remainderMoney.amount > 0) {
+      const reversalRes = reverseSettlementApplications(
+        ar,
+        new SettlementId(payment.id.value),
+        remainderMoney
       );
-
-      const applyRes = applyRefund(ar, invoice.id, Money.create(allocationRefund, currency).value);
-      if (applyRes.isFailure) {
-        throw new Error(`Accounts Receivable refund rejected: ${applyRes.error.message}`);
+      if (reversalRes.isFailure) {
+        throw new Error(`Accounts Receivable refund rejected: ${reversalRes.error.message}`);
       }
-      arDirty = true;
-
-      addInvoiceRefund(invoice, allocationRefund);
+      const { reversed, remainder, shares: appliedShares } = reversalRes.value;
+      if (remainder.amount > 0) {
+        throw new Error(
+          `Refund reversal could not attribute ${remainder.amount} ${currency} of payment ${payment.id.value} to any receivable application.`
+        );
+      }
+      if (reversed.amount > 0) {
+        arDirty = true;
+      }
+      for (const share of appliedShares) {
+        const invoice = await this.loadReversalInvoice(
+          payment,
+          share.invoiceId,
+          currency,
+          anchorInvoice.customerId
+        );
+        addInvoiceRefund(invoice, share.amount.amount);
+      }
     }
 
     if (arDirty) {
@@ -2208,7 +2215,7 @@ export class AcosIntegrationBoundary {
     }
 
     for (const { invoice, amount: invoiceRefund } of refundedByInvoice.values()) {
-      await this.recordInvoiceRefund(payment, invoice, Money.create(invoiceRefund, invoice.currency).value);
+      await this.recordInvoiceRefund(payment, ar, invoice, Money.create(invoiceRefund, invoice.currency).value);
     }
     this.logger.info("refundPayment: Reversal reconciliation completed successfully.");
   }
@@ -2241,7 +2248,12 @@ export class AcosIntegrationBoundary {
     return invoice;
   }
 
-  private async recordInvoiceRefund(payment: Payment, invoice: Invoice, refunded: Money): Promise<void> {
+  private async recordInvoiceRefund(
+    payment: Payment,
+    ar: AccountsReceivable,
+    invoice: Invoice,
+    refunded: Money
+  ): Promise<void> {
     // Update Invoice Obligation Status from cumulative net payments.
     const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
     let cumulativePaid = 0;
@@ -2275,7 +2287,14 @@ export class AcosIntegrationBoundary {
       }
     }
 
-    const netPaid = cumulativePaid - cumulativeRefunded;
+    // Credit applied to the invoice moves no payment row, so the payment sums
+    // under-count what its ledger entry still holds settled. The larger view
+    // is the net paid total, matching the collection reconciliation.
+    const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+    const settledByLedger = entry
+      ? entry.originalAmount.amount - entry.remainingBalance.amount
+      : 0;
+    const netPaid = Math.max(cumulativePaid - cumulativeRefunded, settledByLedger);
     const recordRes = recordRefund(invoice, refunded, Money.create(netPaid, invoice.currency).value);
     if (recordRes.isFailure) {
       throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);

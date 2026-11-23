@@ -22,6 +22,7 @@ export interface AccountsReceivableSnapshot {
     amount: number;
     currency: string;
     appliedAt: Date;
+    fundedByCredit: boolean;
   }>;
   customerCredits: Array<{
     id: string;
