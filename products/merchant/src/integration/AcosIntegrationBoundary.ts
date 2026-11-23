@@ -980,6 +980,42 @@ export class AcosIntegrationBoundary {
     return mapper.map(customer);
   }
 
+  /**
+   * Reports the unapplied credit the customer holds with this merchant, in
+   * the business's default currency. A customer with no ledger activity has
+   * no receivable account and therefore no credit.
+   */
+  public async getCustomerCreditBalance(
+    userId: string,
+    customerId: string
+  ): Promise<{ customerId: string; currency: string; availableCredit: number }> {
+    this.logger.info("getCustomerCreditBalance: Querying customer credit...", { userId, customerId });
+
+    const customerRes = await this.customerRepository.findById(new CustomerId(customerId));
+    if (customerRes.isFailure) {
+      throw new Error(`Customer with ID ${customerId} not found.`);
+    }
+    const customer = customerRes.value;
+
+    await this.verifyBusinessOwnership(userId, customer.organizationId.value);
+
+    const orgRes = await this.organizationRepository.findById(customer.organizationId);
+    if (orgRes.isFailure) throw new Error("Organization not found");
+    const currency = orgRes.value.settings.defaultCurrency.value;
+
+    const arRes = await this.accountsReceivableRepository.findByCustomer(
+      customer.organizationId,
+      customer.id
+    );
+    const availableCredit = arRes.isSuccess ? getReceivableCreditBalance(arRes.value, currency).amount : 0;
+
+    return {
+      customerId: customer.id.value,
+      currency,
+      availableCredit
+    };
+  }
+
   // ========================================================
   // INVOICE LIFECYCLE MANAGEMENT METHODS
   // ========================================================

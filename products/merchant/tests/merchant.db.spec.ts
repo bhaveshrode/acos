@@ -628,6 +628,47 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(credit.remainingAmount.toNumber()).toBe(0);
   });
 
+  it("reports a customer's credit balance from the persisted ledger", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `credit_read_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Credit Read Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Credit Read Shop", `credit-read-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Crediting Cora",
+      customerNumber: `CUST-CREDIT-READ-${Date.now()}`,
+      primaryContact: { name: "Crediting Cora", email: "cora@example.com" },
+      billingAddress: { line1: "7 Surplus Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoice = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-READ-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Overpaid project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoice.id);
+    await frontend.sendInvoice(invoice.id);
+
+    // 160 collected against a 100 invoice leaves 60 of unapplied credit.
+    await frontend.collectPayment(invoice.id, 160);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoice.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, true);
+
+    const balance = await frontend.getCustomerCreditBalance(customer.id);
+    expect(balance.customerId).toBe(customer.id);
+    expect(balance.currency).toBe("USD");
+    expect(balance.availableCredit).toBe(60);
+  });
+
   it("should persist an asynchronous refund request and settle it from the webhook", async () => {
     if (!isDbAvailable) {
       return;
