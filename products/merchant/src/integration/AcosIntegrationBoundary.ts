@@ -2276,6 +2276,13 @@ export class AcosIntegrationBoundary {
   private async netPaidFor(payment: Payment, ar: AccountsReceivable, invoice: Invoice): Promise<number> {
     const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
     if (entry) {
+      const settled = entry.originalAmount.amount - entry.remainingBalance.amount;
+      // Overpayment only sits on top of a fully settled obligation: while the
+      // entry is open, credit booked against this invoice is separate money the
+      // customer can still apply to it, not payment for it.
+      if (entry.remainingBalance.amount > 0) {
+        return settled;
+      }
       const unappliedCredit = ar.customerCredits
         .filter(
           (credit) =>
@@ -2283,7 +2290,7 @@ export class AcosIntegrationBoundary {
             credit.remainingBalance.currency === invoice.currency
         )
         .reduce((sum, credit) => sum + credit.remainingBalance.amount, 0);
-      return entry.originalAmount.amount - entry.remainingBalance.amount + unappliedCredit;
+      return settled + unappliedCredit;
     }
 
     const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
