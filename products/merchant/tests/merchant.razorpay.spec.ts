@@ -270,7 +270,7 @@ describe("ACOS Merchant — Razorpay Payment Provider", () => {
   });
 
   it("surfaces a 4xx refund rejection as a definitive failure", async () => {
-    const error: any = new Error("Razorpay POST /payments/pay_captured/refunds failed with 400: bad request");
+    const error: any = new Error("Razorpay POST /payments/pay_captured/refund failed with 400: bad request");
     error.statusCode = 400;
     client.stubRefundError(error);
 
