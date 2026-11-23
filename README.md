@@ -29,7 +29,6 @@ ACOS/
 ├── backend/                # Core OS Kernel, DDD primitives, and CQRS handlers
 ├── runtime/                # Subsystem bootstrapper, composition, and health metrics
 └── products/
-    ├── admin-console/      # Core Admin Panel UI, routing, theme, and ws state
     └── merchant/           # Decoupled Merchant portal Express.js app
 ```
 
