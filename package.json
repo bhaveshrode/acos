@@ -5,7 +5,6 @@
   "workspaces": [
     "backend",
     "runtime",
-    "products/admin-console",
     "products/merchant"
   ]
 }
