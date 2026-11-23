@@ -437,19 +437,27 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
       // event can only prove delivery and idempotency. Stay up for a bounded
       // window and record which handler branch the event took instead of
       // closing the process the instant the settlement checks pass.
+      // Attribute the event to this payment and refund request: the handler
+      // logs both ids on every refund webhook line, and an unrelated event
+      // must not count as this refund's delivery.
+      const isThisRefund = (entry: LogEntry) => {
+        const data: Record<string, any> = entry.context.additionalData ?? {};
+        return data.paymentId === state.paymentId && data.refundRequestId === refundRow.id;
+      };
+
       let refundWebhookOutcome = "";
       if (!settledByWebhook) {
         const webhookDeadline = Date.now() + REFUND_WEBHOOK_WAIT_MS;
         while (Date.now() < webhookDeadline) {
-          const webhookEntries = logs.filter((entry) => entry.message.includes("processRefundWebhook:"));
           // "Processing refund webhook..." is logged on entry, before the
           // transaction picks a branch; only a terminal line can classify the
           // event.
-          const terminal = webhookEntries.find(
+          const terminal = logs.find(
             (entry) =>
-              entry.message.includes("Refund marked as COMPLETED") ||
-              entry.message.includes("already completed") ||
-              entry.message.includes("Duplicate webhook")
+              isThisRefund(entry) &&
+              (entry.message.includes("Refund marked as COMPLETED") ||
+                entry.message.includes("already completed") ||
+                entry.message.includes("Duplicate webhook"))
           );
           if (terminal) {
             refundWebhookOutcome = terminal.message.includes("Refund marked as COMPLETED")
@@ -461,7 +469,10 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
           }
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
-        if (!refundWebhookOutcome && logs.some((entry) => entry.message.includes("processRefundWebhook:"))) {
+        if (
+          !refundWebhookOutcome &&
+          logs.some((entry) => isThisRefund(entry) && entry.message.includes("processRefundWebhook:"))
+        ) {
           refundWebhookOutcome = `delivered but reached no terminal branch within ${REFUND_WEBHOOK_WAIT_MS / 1000}s`;
         }
       }
