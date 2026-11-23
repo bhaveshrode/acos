@@ -283,6 +283,36 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     }
   });
 
+  it("rebuilds its consumer group instead of stalling when the group disappears", async () => {
+    if (!isBrokerAvailable) return;
+
+    const streamName = `${namespace}.regroup`;
+    const replicaId = "regroup-b";
+    const received: string[] = [];
+    const busA = createBus(streamName, "regroup-a");
+    const busB = createBus(streamName, replicaId);
+
+    try {
+      await busA.start();
+      await busB.start();
+      busB.subscribe("BrokerRegroupProbe", handlerFor(received));
+
+      // A vanished group used to make the read loop retry `NOGROUP` forever,
+      // silently stranding every later event.
+      await probe!.xgroup("DESTROY", streamName, brokerConsumerGroup(replicaId));
+
+      await busA.publish(makeEvent("BrokerRegroupProbe"));
+      await waitFor(() => received.length === 1);
+
+      await busA.publish(makeEvent("BrokerRegroupProbe"));
+      await waitFor(() => received.length === 2);
+      expect(received).toEqual(["BrokerRegroupProbe", "BrokerRegroupProbe"]);
+    } finally {
+      await busA.close();
+      await busB.close();
+    }
+  });
+
   // Two boundaries must connect before delivery even starts, and a slow CI run
   // can stall the receiving replica well past the default 5s. Waiting 20s inside
   // a 30s cap rides out a transient stall; the delivery state captured on
@@ -337,33 +367,52 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
       expect(after.lockedBy).toBeNull();
 
       // A stalled read and a lost entry look identical from here, so a timeout
-      // reports what the stream and the receiving group actually saw.
+      // reports what the stream and the receiving group actually saw. The reads
+      // are correlated with this test's eventType because the default stream and
+      // the group also carry entries from other tests.
       const describeDeliveryState = async (): Promise<string> => {
         const streamName = BROKER_DEFAULT_STREAM;
         const groupName = brokerConsumerGroup(`${namespace}-outbox-b`);
         const parts: string[] = [];
 
+        let matchingId: string | null = null;
         try {
           parts.push(`stream length=${await probe!.xlen(streamName)}`);
-          const latest = (await (probe! as any).xrevrange(
-            streamName, "+", "-", "COUNT", 1
+          const recent = (await (probe! as any).xrevrange(
+            streamName, "+", "-", "COUNT", 200
           )) as any[];
-          const [entryId, fields] = (latest?.[0] ?? []) as [string | undefined, unknown];
-          const flat = Array.isArray(fields) ? fields : [];
-          const record: Record<string, string> = {};
-          for (let i = 0; i + 1 < flat.length; i += 2) {
-            record[String(flat[i])] = String(flat[i + 1]);
+          for (const entry of recent ?? []) {
+            const [entryId, fields] = (entry ?? []) as [string | undefined, unknown];
+            if (fieldsToRecord(fields).eventType === eventType) {
+              matchingId = entryId ?? null;
+              break;
+            }
           }
           parts.push(
-            `last entry=${entryId ?? "none"} eventType=${record.eventType ?? "?"} eventId=${record.eventId ?? "?"}`
+            matchingId
+              ? `matching entry=${matchingId}`
+              : "matching entry absent from the last 200 stream entries"
           );
         } catch (err: any) {
           parts.push(`stream unreadable: ${err?.message ?? err}`);
         }
 
         try {
-          const pending = (await probe!.xpending(streamName, groupName)) as any[];
-          parts.push(`group ${groupName} pending=${Number(pending?.[0] ?? 0)}`);
+          const id = matchingId;
+          if (id) {
+            const detail = (await (probe! as any).xpending(
+              streamName, groupName, "-", "+", 10
+            )) as any[];
+            const pendingIds = new Set((detail ?? []).map((entry: any) => String(entry?.[0])));
+            parts.push(`matching entry pending=${pendingIds.has(id)}`);
+          }
+        } catch (err: any) {
+          parts.push(`pending detail unreadable: ${err?.message ?? err}`);
+        }
+
+        try {
+          const summary = (await probe!.xpending(streamName, groupName)) as any[];
+          parts.push(`group ${groupName} pending total=${Number(summary?.[0] ?? 0)}`);
         } catch (err: any) {
           parts.push(`group ${groupName} unreadable: ${err?.message ?? err}`);
         }
@@ -416,6 +465,35 @@ async function waitFor(
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  const state = describeState ? ` (${await describeState()})` : "";
+  const state = describeState ? ` (${await boundedDiagnostics(describeState)})` : "";
   throw new Error(`Timed out waiting for broker delivery${state}`);
+}
+
+// A diagnostic read over a half-open connection can hang, which would let the
+// test cap kill the run before the enriched timeout message appears.
+async function boundedDiagnostics(
+  run: () => Promise<string>,
+  timeoutMs = 2_000
+): Promise<string> {
+  return new Promise<string>((resolve) => {
+    const timer = setTimeout(
+      () => resolve(`diagnostics timed out after ${timeoutMs}ms`),
+      timeoutMs
+    );
+    run()
+      .catch((err: any) => `diagnostics failed: ${err?.message ?? err}`)
+      .then((text) => {
+        clearTimeout(timer);
+        resolve(text);
+      });
+  });
+}
+
+function fieldsToRecord(fields: unknown): Record<string, string> {
+  const record: Record<string, string> = {};
+  if (!Array.isArray(fields)) return record;
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    record[String(fields[i])] = String(fields[i + 1]);
+  }
+  return record;
 }

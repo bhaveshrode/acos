@@ -45,6 +45,13 @@ export interface RedisStreamEventBusOptions {
  * in the group's pending list, `XAUTOCLAIM` redelivers it after `claimIdleMs`, and
  * repeated failures move it to the dead-letter stream. Republished outbox rows are
  * suppressed per group by `eventId`.
+ *
+ * The group starts at `$` when it is first created, because a replica that has just
+ * booted holds no state a skipped event could have invalidated. If the group later
+ * disappears (the stream is deleted or Redis loses its state), the read loop rebuilds
+ * it at `0` instead of retrying `NOGROUP` forever: by then the replica's caches are
+ * populated, so the retained entries must be replayed, and an entry already handled
+ * is still suppressed by its `eventId`.
  */
 export class RedisStreamEventBus implements IEventBus {
   private readonly local = new InMemoryEventBus();
@@ -185,14 +192,32 @@ export class RedisStreamEventBus implements IEventBus {
     this.local.unsubscribe(eventName, handler);
   }
 
-  private async ensureGroup(): Promise<void> {
+  private async ensureGroup(startId: "$" | "0" = "$"): Promise<boolean> {
     try {
-      await this.client!.xgroup("CREATE", this.streamName, this.groupName, "$", "MKSTREAM");
+      await this.client!.xgroup("CREATE", this.streamName, this.groupName, startId, "MKSTREAM");
+      return true;
     } catch (err: any) {
       if (!String(err?.message ?? err).includes("BUSYGROUP")) {
         throw err;
       }
+      return false;
     }
+  }
+
+  /**
+   * Rebuilds a group that disappeared while this replica was running, so later
+   * events keep being delivered instead of the loop retrying `NOGROUP` forever.
+   * The group restarts at `0` rather than `$`: this replica's caches are live, so
+   * skipping the retained entries would leave them stale.
+   */
+  private async recoverGroup(): Promise<void> {
+    const created = await this.ensureGroup("0");
+    if (!created) return;
+
+    this.logger.warn("Broker consumer group was missing; recreated at the start of the retained stream", {
+      streamName: this.streamName,
+      groupName: this.groupName
+    });
   }
 
   private async enqueue(event: IDomainEvent, eventId: string): Promise<void> {
@@ -250,13 +275,24 @@ export class RedisStreamEventBus implements IEventBus {
 
         await this.reclaimStaleEntries();
       } catch (err) {
-        if (!this.closed) {
+        if (this.closed) continue;
+        if (isConsumerGroupMissing(err)) {
+          try {
+            await this.recoverGroup();
+            continue;
+          } catch (recoverErr) {
+            this.logger.error(
+              "Broker consumer group recovery failed; retrying",
+              recoverErr instanceof Error ? recoverErr : new Error(String(recoverErr))
+            );
+          }
+        } else {
           this.logger.error(
             "Broker consumer read failed; retrying",
             err instanceof Error ? err : new Error(String(err))
           );
-          await delay(250);
         }
+        await delay(250);
       }
     }
   }
@@ -399,6 +435,10 @@ export class RedisStreamEventBus implements IEventBus {
       }
     }
   }
+}
+
+function isConsumerGroupMissing(err: unknown): boolean {
+  return String((err as any)?.message ?? err).includes("NOGROUP");
 }
 
 function fieldsToRecord(fields: unknown): Record<string, string> {
