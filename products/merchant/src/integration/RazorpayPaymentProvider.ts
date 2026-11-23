@@ -88,7 +88,9 @@ export class RazorpayRestClient implements RazorpayClient {
   }
 
   public async createRefund(request: RazorpayRefundRequest): Promise<RazorpayRefundEntity> {
-    return this.request<RazorpayRefundEntity>("POST", `/payments/${encodeURIComponent(request.paymentId)}/refunds`, {
+    // Razorpay's create-refund route is singular; the plural `/refunds` path
+    // exists only for listing a payment's refunds (GET).
+    return this.request<RazorpayRefundEntity>("POST", `/payments/${encodeURIComponent(request.paymentId)}/refund`, {
       amount: request.amountMinor,
       notes: request.notes
     });
