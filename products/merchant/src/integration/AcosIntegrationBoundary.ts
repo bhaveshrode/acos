@@ -1346,6 +1346,19 @@ export class AcosIntegrationBoundary {
       throw new Error(`No payment aggregate registered under gateway reference: ${gatewayReference}`);
     }
 
+    // A payment that was already reconciled is acknowledged before the gateway
+    // is consulted: after a refund the gateway no longer reports the payment as
+    // captured, so asking it again would turn a routine re-delivery into a
+    // retry loop. The locked check inside the transaction stays authoritative.
+    const knownRes = await this.paymentRepository.findByGatewayReference(gatewayRefRes.value);
+    if (knownRes.isSuccess && this.isConfirmedOnce(knownRes.value.status)) {
+      this.logger.info("processPaymentWebhook: Payment was already confirmed; acknowledging re-delivered callback.", {
+        paymentId: knownRes.value.id.value,
+        status: knownRes.value.status
+      });
+      return new PaymentMapper().map(knownRes.value);
+    }
+
     // Gateway I/O stays outside the unit of work so no DB transaction is held
     // open across an external call.
     const providerResponse = await this.paymentProvider.completePayment({
@@ -1390,9 +1403,15 @@ export class AcosIntegrationBoundary {
         }
       }
 
-      // Idempotency: Ignore duplicate webhooks if payment is already confirmed
-      if (payment.status === "CONFIRMED") {
-        this.logger.info("processPaymentWebhook: Duplicate webhook received. Payment is already CONFIRMED. Ignoring.");
+      // Idempotency: reconciliation already ran when this payment was confirmed,
+      // so every confirmed-once state ignores re-delivered callbacks. A refunded
+      // payment is no longer CONFIRMED; confirming it again would re-apply the
+      // refunded money to the ledger and flip the invoice back to PAID.
+      if (this.isConfirmedOnce(payment.status)) {
+        this.logger.info("processPaymentWebhook: Payment was already confirmed; ignoring re-delivered callback.", {
+          paymentId: payment.id.value,
+          status: payment.status
+        });
         return payment;
       }
 
@@ -1795,6 +1814,15 @@ export class AcosIntegrationBoundary {
     const db = this.dbClient;
     if (!db || typeof db.$queryRawUnsafe !== "function") return;
     await db.$queryRawUnsafe('SELECT id FROM "Payment" WHERE id = $1 FOR UPDATE', paymentId);
+  }
+
+  /** States a payment only enters after its collections were reconciled. */
+  private isConfirmedOnce(status: PaymentStatus): boolean {
+    return (
+      status === PaymentStatus.CONFIRMED ||
+      status === PaymentStatus.REFUND_REQUESTED ||
+      status === PaymentStatus.REFUNDED
+    );
   }
 
   /**
