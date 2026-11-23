@@ -253,7 +253,10 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     });
     expect(idempRec).toBeDefined();
     expect(idempRec.statusCode).toBe(201);
-  });
+    // The status poll may run its full deadline on failure, so the test has to
+    // outlive the helper's window; otherwise a broken reconciliation surfaces
+    // as a Vitest timeout instead of the observed invoice status.
+  }, 20_000);
 
   it("should persist refunds and re-open invoice and receivable balances", async () => {
     if (!isDbAvailable) {
