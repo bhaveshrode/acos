@@ -1326,7 +1326,16 @@ export class AcosIntegrationBoundary {
         throw new Error(`Payment aggregate associated with gateway reference ${gatewayReference} not found.`);
       }
 
-      const payment = paymentRes.value;
+      // Duplicate deliveries can arrive concurrently; the lock plus reload makes
+      // the confirmation and its reconciliation happen exactly once.
+      const paymentId = paymentRes.value.id.value;
+      await this.lockPaymentRow(paymentId);
+      const lockedRes = await this.paymentRepository.findById(new PaymentId(paymentId));
+      if (lockedRes.isFailure) {
+        throw new Error(`Payment aggregate associated with gateway reference ${gatewayReference} not found.`);
+      }
+
+      const payment = lockedRes.value;
 
       // Capture the gateway's own payment identifier now so later operations
       // (e.g. refunds against a Razorpay `pay_…`) can address the gateway.
@@ -1377,17 +1386,7 @@ export class AcosIntegrationBoundary {
           }
 
           // 4. Accounts Receivable Bookkeeping
-          let ar: AccountsReceivable;
-          const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
-          if (arRes.isSuccess) {
-            ar = arRes.value;
-          } else {
-            const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
-            if (openRes.isFailure) {
-              throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
-            }
-            ar = openRes.value;
-          }
+          const ar = await this.loadReceivableForUpdate(invoice.organizationId, invoice.customerId);
 
           // Ensure obligation is registered in AR
           const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
@@ -1503,34 +1502,36 @@ export class AcosIntegrationBoundary {
     }
 
     return this.withinTransaction(async () => {
-      let ar: AccountsReceivable;
-      const arRes = await this.accountsReceivableRepository.findByCustomer(invoice.organizationId, invoice.customerId);
-      if (arRes.isSuccess) {
-        ar = arRes.value;
-      } else {
-        const openRes = openReceivableAccount(invoice.organizationId, invoice.customerId);
-        if (openRes.isFailure) {
-          throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
-        }
-        ar = openRes.value;
+      const ar = await this.loadReceivableForUpdate(invoice.organizationId, invoice.customerId);
+
+      // The eligibility checks above read an unlocked snapshot; re-read the
+      // invoice under the ledger lock so the decision and the write agree.
+      const lockedRes = await this.invoiceRepository.findById(invoice.id);
+      if (lockedRes.isFailure) {
+        throw new Error(`Invoice with ID ${invoiceId} not found.`);
+      }
+      const lockedInvoice = lockedRes.value;
+      const stillCollectable = lockedInvoice.sentAt !== null && (lockedInvoice.status === "ISSUED" || lockedInvoice.status === "PARTIALLY_PAID");
+      if (!stillCollectable) {
+        throw new Error("Credit application rejected: Credit can only be applied to SENT invoices awaiting payment.");
       }
 
-      const registerRes = registerInvoiceObligation(ar, invoice.id, invoice.grandTotal, invoice.dueDate.value);
+      const registerRes = registerInvoiceObligation(ar, lockedInvoice.id, lockedInvoice.grandTotal, lockedInvoice.dueDate.value);
       if (registerRes.isFailure) {
         throw new Error(`Accounts Receivable booking rejected: ${registerRes.error.message}`);
       }
 
-      const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+      const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(lockedInvoice.id));
       if (!entry) {
         throw new Error("Accounts Receivable booking rejected: invoice obligation was not registered.");
       }
 
-      const requested = amount ?? Math.min(ar.getCreditBalance(invoice.currency).amount, entry.remainingBalance.amount);
+      const requested = amount ?? Math.min(ar.getCreditBalance(lockedInvoice.currency).amount, entry.remainingBalance.amount);
       if (requested <= 0) {
         throw new Error("Credit application rejected: the customer has no available credit in the invoice currency.");
       }
 
-      const applyRes = applyCustomerCredit(ar, invoice.id, Money.create(requested, invoice.currency).value);
+      const applyRes = applyCustomerCredit(ar, lockedInvoice.id, Money.create(requested, lockedInvoice.currency).value);
       if (applyRes.isFailure) {
         throw new Error(`Accounts Receivable credit application rejected: ${applyRes.error.message}`);
       }
@@ -1542,28 +1543,28 @@ export class AcosIntegrationBoundary {
 
       // Credit settlements leave no Payment row, so the invoice's paid amount is
       // re-derived from its receivable entry instead of gateway allocations.
-      const netPaid = invoice.grandTotal.amount - entry.remainingBalance.amount;
-      const recordRes = recordPayment(invoice, Money.create(netPaid, invoice.currency).value);
+      const netPaid = lockedInvoice.grandTotal.amount - entry.remainingBalance.amount;
+      const recordRes = recordPayment(lockedInvoice, Money.create(netPaid, lockedInvoice.currency).value);
       if (recordRes.isFailure) {
         throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
       }
-      const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+      const invoiceSaveRes = await this.invoiceRepository.save(lockedInvoice);
       if (invoiceSaveRes.isFailure) {
         throw new Error(`Failed to save reconciled invoice: ${invoiceSaveRes.error.message}`);
       }
 
-      if (invoice.domainEvents.length > 0) {
-        this.logger.info(`Publishing ACOS invoice credit-application events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
-        await this.eventBus.publishAll(invoice.domainEvents);
-        invoice.clearDomainEvents();
+      if (lockedInvoice.domainEvents.length > 0) {
+        this.logger.info(`Publishing ACOS invoice credit-application events to the Event Bus: ${lockedInvoice.domainEvents.map(e => e.eventName).join(", ")}`);
+        await this.eventBus.publishAll(lockedInvoice.domainEvents);
+        lockedInvoice.clearDomainEvents();
       }
 
       return {
-        invoiceId: invoice.id.value,
+        invoiceId: lockedInvoice.id.value,
         amountApplied: requested,
-        invoiceStatus: invoice.status,
+        invoiceStatus: lockedInvoice.status,
         outstandingBalance: entry.remainingBalance.amount,
-        creditBalance: ar.getCreditBalance(invoice.currency).amount
+        creditBalance: ar.getCreditBalance(lockedInvoice.currency).amount
       };
     });
   }
@@ -1601,7 +1602,7 @@ export class AcosIntegrationBoundary {
     const reservation = await this.withinTransaction(async () => {
       // Serialize reservations per payment: the row lock makes the cap check
       // and the refund insert atomic across concurrent connections.
-      await this.lockPaymentForRefund(paymentId);
+      await this.lockPaymentRow(paymentId);
 
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
@@ -1687,7 +1688,7 @@ export class AcosIntegrationBoundary {
     const payment = await this.withinTransaction(async () => {
       // The refund webhook may settle this reservation concurrently; the row
       // lock makes the status check below authoritative.
-      await this.lockPaymentForRefund(paymentId);
+      await this.lockPaymentRow(paymentId);
 
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
@@ -1728,14 +1729,48 @@ export class AcosIntegrationBoundary {
   }
 
   /**
-   * Serializes refund reservations for one payment with a Postgres row lock,
-   * so concurrent requests cannot both pass the cap check. The in-memory
+   * Serializes mutations of one payment with a Postgres row lock, so
+   * concurrent refund reservations, refund completions and duplicate gateway
+   * deliveries cannot both pass their read-then-write checks. The in-memory
    * repositories have a single writer and skip it.
    */
-  private async lockPaymentForRefund(paymentId: string): Promise<void> {
+  private async lockPaymentRow(paymentId: string): Promise<void> {
     const db = this.dbClient;
     if (!db || typeof db.$queryRawUnsafe !== "function") return;
     await db.$queryRawUnsafe('SELECT id FROM "Payment" WHERE id = $1 FOR UPDATE', paymentId);
+  }
+
+  /**
+   * Serializes money movements on one customer's receivable ledger. The
+   * customer row exists before any ledger row does, so locking it also covers
+   * first-time account creation. Callers must lock the payment first when they
+   * touch one, which keeps the acquisition order payment -> ledger everywhere.
+   */
+  private async lockCustomerLedger(customerId: string): Promise<void> {
+    const db = this.dbClient;
+    if (!db || typeof db.$queryRawUnsafe !== "function") return;
+    await db.$queryRawUnsafe('SELECT id FROM "Customer" WHERE id = $1 FOR UPDATE', customerId);
+  }
+
+  /**
+   * Locks the customer's ledger and returns its receivable account, opening
+   * one on first use. Must be called inside a transaction.
+   */
+  private async loadReceivableForUpdate(
+    organizationId: OrganizationId,
+    customerId: CustomerId
+  ): Promise<AccountsReceivable> {
+    await this.lockCustomerLedger(customerId.value);
+
+    const arRes = await this.accountsReceivableRepository.findByCustomer(organizationId, customerId);
+    if (arRes.isSuccess) {
+      return arRes.value;
+    }
+    const openRes = openReceivableAccount(organizationId, customerId);
+    if (openRes.isFailure) {
+      throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
+    }
+    return openRes.value;
   }
 
   /**
@@ -1759,7 +1794,7 @@ export class AcosIntegrationBoundary {
     await this.withinTransaction(async () => {
       // Serialize with the stale-reservation sweep so it cannot reject this
       // reservation between the reload and the save.
-      await this.lockPaymentForRefund(paymentId);
+      await this.lockPaymentRow(paymentId);
 
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
@@ -1790,7 +1825,7 @@ export class AcosIntegrationBoundary {
       await this.withinTransaction(async () => {
         // Serialize with the sweep and the submission marker so the reload
         // below sees a settled status.
-        await this.lockPaymentForRefund(paymentId);
+        await this.lockPaymentRow(paymentId);
 
         const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
         if (reloadRes.isFailure) {
@@ -1859,7 +1894,7 @@ export class AcosIntegrationBoundary {
       await this.withinTransaction(async () => {
         // Serialize with the submission marker: if a worker is approving this
         // reservation right now, the reload below sees APPROVED and skips it.
-        await this.lockPaymentForRefund(row.paymentId);
+        await this.lockPaymentRow(row.paymentId);
 
         const paymentRes = await this.paymentRepository.findById(new PaymentId(row.paymentId));
         if (paymentRes.isFailure) {
@@ -1934,7 +1969,7 @@ export class AcosIntegrationBoundary {
    */
   public async releaseUnsubmittedRefundReservation(paymentId: string, refundRequestId: string): Promise<boolean> {
     return this.withinTransaction(async () => {
-      await this.lockPaymentForRefund(paymentId);
+      await this.lockPaymentRow(paymentId);
 
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
@@ -2018,20 +2053,7 @@ export class AcosIntegrationBoundary {
       firstAllocation.allocatedAmount.currency
     );
 
-    let ar: AccountsReceivable;
-    const arRes = await this.accountsReceivableRepository.findByCustomer(
-      anchorInvoice.organizationId,
-      anchorInvoice.customerId
-    );
-    if (arRes.isSuccess) {
-      ar = arRes.value;
-    } else {
-      const openRes = openReceivableAccount(anchorInvoice.organizationId, anchorInvoice.customerId);
-      if (openRes.isFailure) {
-        throw new Error(`Failed to open receivable account: ${openRes.error.message}`);
-      }
-      ar = openRes.value;
-    }
+    const ar = await this.loadReceivableForUpdate(anchorInvoice.organizationId, anchorInvoice.customerId);
 
     // 1. Return what this payment never applied. An overpayment is booked as
     // customer credit, so refunding it must not re-open the settled invoice.
@@ -2223,7 +2245,7 @@ export class AcosIntegrationBoundary {
     const payment = await this.withinTransaction(async () => {
       // The synchronous refund response may settle this refund concurrently;
       // the row lock makes the status re-check below authoritative.
-      await this.lockPaymentForRefund(paymentId);
+      await this.lockPaymentRow(paymentId);
 
       const reloadRes = await this.paymentRepository.findById(new PaymentId(paymentId));
       if (reloadRes.isFailure) {
