@@ -1262,6 +1262,45 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       }
     });
 
+    it("counts applied credit when a later payment settles the invoice", async () => {
+      const provider = new DeferredRefundProvider();
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer } = await setupConfirmedPayment(localBoundary, "credit-cash-shop", 100, 150);
+
+        const second = await localBoundary.createInvoice(user.id, {
+          organizationId: org.id,
+          customerId: customer.id,
+          invoiceNumber: "INV-ASYNC-005",
+          currency: "USD",
+          paymentTerms: "NET_30",
+          issueDate: new Date().toISOString(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          lines: [{ description: "Split project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+        });
+        await localBoundary.issueInvoice(user.id, second.id);
+        await localBoundary.sendInvoice(user.id, second.id);
+
+        // Half the invoice is settled by credit, leaving 50 due.
+        await localBoundary.applyCreditToInvoice(user.id, second.id, 50);
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("PARTIALLY_PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(50);
+
+        // The customer pays the remaining 50 by card; the webhook reconciles it.
+        const payment = await localBoundary.createPaymentRequest(user.id, second.id, 50);
+        const { PaymentId } = await import("acos-backend");
+        const aggRes = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        await localBoundary.processPaymentWebhook(aggRes.value.gatewayReference!.value, true, undefined, undefined, "pay_test_2");
+
+        // The payment covers only half the invoice, but the ledger entry was
+        // already settled by credit, so the invoice is fully paid.
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
     it("serializes overlapping refunds through the committed reservation", async () => {
       const provider = new DeferredRefundProvider();
       provider.refundStatus = "SUCCEEDED";

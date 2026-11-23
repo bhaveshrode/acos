@@ -1407,6 +1407,12 @@ export class AcosIntegrationBoundary {
           if (applyRes.isFailure) {
             throw new Error(`Accounts Receivable booking rejected: ${applyRes.error.message}`);
           }
+
+          const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+          if (!entry) {
+            throw new Error("Accounts Receivable booking rejected: invoice obligation was not registered.");
+          }
+
           const arSaveRes = await this.accountsReceivableRepository.save(ar);
           if (arSaveRes.isFailure) {
             throw new Error(`Failed to persist receivable ledger: ${arSaveRes.error.message}`);
@@ -1429,7 +1435,14 @@ export class AcosIntegrationBoundary {
             }
           }
 
-          const cumulativeMoney = Money.create(cumulativePaid, invoice.currency).value;
+          // Payments alone under-count what settled the invoice: credit applied
+          // to it moves no payment row. The entry already nets that credit,
+          // while the payment sums carry the overpayment that spilled into
+          // credit, so the larger of the two views is the paid total.
+          const settledByLedger = entry.originalAmount.amount - entry.remainingBalance.amount;
+          const paidForStatus = Math.max(cumulativePaid, settledByLedger);
+
+          const cumulativeMoney = Money.create(paidForStatus, invoice.currency).value;
           const recordRes = recordPayment(invoice, cumulativeMoney);
           if (recordRes.isFailure) {
             throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
