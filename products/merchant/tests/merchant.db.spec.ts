@@ -462,6 +462,105 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(arEntry.remainingAmount.toNumber()).toBe(0);
   });
 
+  it("serializes concurrent credit applications across independent database connections", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `credit_race_${Date.now()}@example.com`;
+    const user = await frontend.signUp(email, "password123", "Credit Race Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Credit Race Shop", `credit-race-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Race Cleo",
+      customerNumber: `CUST-CREDIT-RACE-${Date.now()}`,
+      primaryContact: { name: "Race Cleo", email: "cleo-race@example.com" },
+      billingAddress: { line1: "5 Surplus Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoiceA = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-RACE-A-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "First project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoiceA.id);
+    await frontend.sendInvoice(invoiceA.id);
+
+    // 160 collected against a 100 invoice leaves 60 of customer credit.
+    await frontend.collectPayment(invoiceA.id, 160);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoiceA.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, true);
+
+    const invoiceB = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-RACE-B-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Second project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoiceB.id);
+    await frontend.sendInvoice(invoiceB.id);
+
+    const invoiceC = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-RACE-C-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Third project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoiceC.id);
+    await frontend.sendInvoice(invoiceC.id);
+
+    // A second boundary opens its own Prisma pool, so both applications run in
+    // independent transactions/connections rather than sharing one process.
+    const secondRuntime = new RuntimeFactory();
+    secondRuntime.registry.register(new SubsystemDescriptor("backend", [], new Mediator()));
+    secondRuntime.health.registerCheck("backend", async () => ({ name: "backend", healthy: true } as any));
+    const secondBoundary = new AcosIntegrationBoundary(new Logger("AcosDbBoundaryCreditRace", writer), secondRuntime);
+    await secondBoundary.connect("test", dbUrl, { allowInProcessBus: true });
+
+    try {
+      // Each application targets its own invoice, so the invoice rows do not
+      // collide — only the shared 60 of credit does. Without a ledger lock both
+      // read it and both spend it; with one, the second re-reads the ledger
+      // after the first commits and refuses.
+      const [first, second] = await Promise.allSettled([
+        boundary.applyCreditToInvoice(user.id, invoiceB.id, 60),
+        secondBoundary.applyCreditToInvoice(user.id, invoiceC.id, 60)
+      ]);
+
+      const fulfilled = [first, second].filter((r) => r.status === "fulfilled");
+      const rejected = [first, second].filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason.message).toMatch(/Insufficient credit balance/);
+
+      const account = await prisma.receivableAccount.findFirst({ where: { customerId: customer.id } });
+      const credit = await prisma.receivableCredit.findFirst({ where: { accountId: account.id } });
+      expect(credit.remainingAmount.toNumber()).toBe(0);
+      const arEntries = await prisma.receivableEntry.findMany({
+        where: { invoiceId: { in: [invoiceB.id, invoiceC.id] } }
+      });
+      expect(arEntries).toHaveLength(1);
+      expect(arEntries[0].remainingAmount.toNumber()).toBe(40);
+
+      const statuses = [(await frontend.getInvoice(invoiceB.id)).status, (await frontend.getInvoice(invoiceC.id)).status].sort();
+      expect(statuses).toEqual(["PARTIALLY_PAID", "SENT"]);
+    } finally {
+      await secondBoundary.disconnect();
+    }
+  });
+
   it("should persist an asynchronous refund request and settle it from the webhook", async () => {
     if (!isDbAvailable) {
       return;
