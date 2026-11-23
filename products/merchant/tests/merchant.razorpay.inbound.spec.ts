@@ -21,6 +21,9 @@ const DB_URL = process.env.MERCHANT_DATABASE_URL || "postgresql://postgres:postg
 const PORT = 8090;
 const TUNNEL_METRICS_URL = process.env.RAZORPAY_E2E_TUNNEL_METRICS || "http://127.0.0.1:20241/quicktunnel";
 const PAYMENT_WAIT_MS = 15 * 60 * 1000;
+const REFUND_WAIT_MS = 5 * 60 * 1000;
+const E2E_AMOUNT = 1;
+const RAZORPAY_API_BASE = "https://api.razorpay.com/v1";
 const STATE_PATH = process.env.RAZORPAY_E2E_STATE || path.join(os.tmpdir(), "razorpay-e2e-state.json");
 
 /**
@@ -62,7 +65,9 @@ function publishStepSummary(markdown: string): void {
 /**
  * Opt-in inbound round trip: a human pays a real test-mode Payment Link and
  * Razorpay's webhook must reach this process through a public tunnel, confirm
- * the payment and reconcile the invoice. Skipped everywhere else.
+ * the payment and reconcile the invoice. The wait phase then refunds the
+ * payment through the app and requires the refund webhook to settle it.
+ * Skipped everywhere else.
  */
 async function resolveTunnelHostname(waitMs = 60_000): Promise<string | null> {
   const deadline = Date.now() + waitMs;
@@ -79,6 +84,43 @@ async function resolveTunnelHostname(waitMs = 60_000): Promise<string | null> {
       // The tunnel has not started yet; retried below.
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return null;
+}
+
+/**
+ * Lists the refunds Razorpay holds for one gateway payment and returns the one
+ * created for `refundRequestId`, matched through the notes the adapter echoes
+ * back on the create-refund call. Polls because a fresh refund can trail the
+ * listing endpoint for a few seconds.
+ */
+async function findGatewayRefund(gatewayPaymentId: string, refundRequestId: string, waitMs = 60_000): Promise<any | null> {
+  const auth = Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString("base64");
+  const deadline = Date.now() + waitMs;
+  let lastNotice = "";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${RAZORPAY_API_BASE}/payments/${encodeURIComponent(gatewayPaymentId)}/refunds`, {
+        headers: { Authorization: `Basic ${auth}` }
+      });
+      if (!response.ok) {
+        lastNotice = `HTTP ${response.status}`;
+      } else {
+        const body: any = await response.json();
+        const items: any[] = Array.isArray(body?.items) ? body.items : [];
+        const match = items.find((item) => item?.notes?.refundRequestId === refundRequestId);
+        if (match) {
+          return match;
+        }
+        lastNotice = `no listed refund carries notes.refundRequestId=${refundRequestId}`;
+      }
+    } catch (err: any) {
+      lastNotice = err?.message ?? String(err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  if (lastNotice) {
+    console.warn(`Gateway refund lookup gave up: ${lastNotice}`);
   }
   return null;
 }
@@ -170,7 +212,7 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
         paymentTerms: "NET_30",
         issueDate: new Date().toISOString(),
         dueDate: new Date(Date.now() + 86_400_000).toISOString(),
-        lines: [{ description: "Inbound webhook verification", quantity: 1, unitPrice: 1, taxRate: 0 }]
+        lines: [{ description: "Inbound webhook verification", quantity: 1, unitPrice: E2E_AMOUNT, taxRate: 0 }]
       });
       await frontend.issueInvoice(invoice.id);
       await frontend.sendInvoice(invoice.id);
@@ -202,23 +244,25 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
 
       console.log(`WEBHOOK URL: ${webhookUrl}`);
       console.log(`PAY THIS LINK: ${payment.paymentUrl}`);
-      console.log(`Invoice ${invoice.id} waits for payment_link.paid.`);
+      console.log(`Invoice ${invoice.id} waits for payment_link.paid; the run then refunds ₹${E2E_AMOUNT} and waits for refund.processed.`);
 
       publishStepSummary(
         [
           "### Razorpay inbound E2E — waiting for a payment",
           "",
-          "1. In the Razorpay dashboard (test mode), point the `payment_link.paid` webhook at:",
+          "1. In the Razorpay dashboard (test mode), point the webhook at:",
           "",
           "```",
           webhookUrl,
           "```",
           "",
-          "2. Pay this ₹1 link with a test card:",
+          "Subscribe it to `payment_link.paid`, `refund.processed` and `refund.failed`.",
+          "",
+          `2. Pay this ₹${E2E_AMOUNT} link with a test card:`,
           "",
           payment.paymentUrl,
           "",
-          "3. The wait phase polls the invoice until Razorpay's callback confirms it.",
+          "3. The wait phase polls the invoice until Razorpay's callback confirms it, then refunds the payment through the app and waits for the refund webhook to settle it.",
           "",
           `State: ${STATE_PATH} (invoice \`${invoice.id}\`, payment \`${payment.id}\`)`,
           ""
@@ -229,7 +273,7 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
   );
 
   it.skipIf(PHASE === "create")(
-    "confirms and reconciles a payment Razorpay collected",
+    "confirms a payment Razorpay collected, then refunds and reconciles it",
     async () => {
       const state = readState();
       // The wait phase usually runs in a fresh process, so it needs its own session.
@@ -280,6 +324,7 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
 
       const paymentRow = await prisma.payment.findUnique({ where: { id: state.paymentId } });
       expect(paymentRow?.gatewayReference, "payments resolve from the persisted link id").toMatch(/^plink_/);
+      expect(paymentRow?.gatewayPaymentId, "the gateway payment id is captured at confirmation").toMatch(/^pay_/);
       expect(paymentRow?.method).toBe("RAZORPAY");
 
       const arAccount = await prisma.receivableAccount.findFirst({
@@ -298,8 +343,103 @@ describe.skipIf(!ENABLED)("ACOS Merchant — Razorpay Inbound E2E", () => {
       });
       expect(paidEvent?.processed).toBe(true);
 
-      console.log("Inbound E2E verified: signature accepted, payment CONFIRMED, invoice PAID, receivable settled.");
+      // Refund the full amount through the app. The gateway usually accepts a
+      // refund as pending, so completion normally depends on the signed
+      // refund.processed webhook; a synchronous `processed` answer skips it.
+      console.log("Payment verified. Refunding the full amount through the app.");
+      const refundResponse = await frontend.refundPayment(state.paymentId, E2E_AMOUNT, "Inbound E2E refund");
+      console.log(`Refund requested; payment reports ${refundResponse.status}.`);
+
+      let refundRow = await prisma.refund.findFirst({ where: { paymentId: state.paymentId } });
+      if (!refundRow) {
+        throw new Error("Refund request was not persisted.");
+      }
+      expect(refundRow.amount.toNumber()).toBe(E2E_AMOUNT);
+      expect(refundRow.currency).toBe("INR");
+      expect(refundRow.reason).toBe("Inbound E2E refund");
+
+      const refundDeadline = Date.now() + REFUND_WAIT_MS;
+      while (refundRow.status !== "COMPLETED" && refundRow.status !== "REJECTED" && Date.now() < refundDeadline) {
+        console.log(`Waiting for the refund to settle; it is ${refundRow.status}.`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        refundRow = await prisma.refund.findUnique({ where: { id: refundRow.id } });
+      }
+
+      if (refundRow.status !== "COMPLETED") {
+        const refundPaymentRow = await prisma.payment.findUnique({ where: { id: state.paymentId } });
+        console.error(`Refund did not complete within ${REFUND_WAIT_MS / 60_000} minutes:`);
+        console.error(`- refund ${refundRow.id}: ${refundRow.status}`);
+        console.error(`- payment ${state.paymentId}: ${refundPaymentRow?.status ?? "missing"}`);
+        for (const entry of logs.filter((e) => /refund|webhook|signature/i.test(e.message)).slice(-15)) {
+          console.error(`- ${entry.level}: ${entry.message}`);
+        }
+        throw new Error(
+          "Refund did not reach COMPLETED. Confirm the webhook is subscribed to refund.processed and refund.failed, then read the diagnostics above."
+        );
+      }
+
+      // The webhook may settle the reservation while the create-refund call is
+      // still in flight, so the row's first status cannot tell the two paths
+      // apart. The settlement log can: each path logs its own completion
+      // exactly once, and the other acknowledges without reversing twice.
+      const settledByWebhook = logs.some((entry) =>
+        entry.message.includes("processRefundWebhook: Refund marked as COMPLETED")
+      );
+      const settledSynchronously = logs.some((entry) =>
+        entry.message.includes("refundPayment: Refund marked as COMPLETED")
+      );
+      if (!settledByWebhook && !settledSynchronously) {
+        throw new Error("The refund is COMPLETED but no settlement path logged it; completion came from elsewhere.");
+      }
+
+      const refundedPayment = await frontend.getPayment(state.paymentId);
+      expect(refundedPayment.status).toBe("REFUNDED");
+
+      let refundedInvoice = await frontend.getInvoice(state.invoiceId);
+      const invoiceDeadline = Date.now() + 30_000;
+      while (refundedInvoice.status !== "SENT" && Date.now() < invoiceDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        refundedInvoice = await frontend.getInvoice(state.invoiceId);
+      }
+      expect(refundedInvoice.status).toBe("SENT");
+
+      const reopenedEntry = await prisma.receivableEntry.findFirst({
+        where: { accountId: arAccount.id, invoiceId: state.invoiceId }
+      });
+      expect(reopenedEntry?.remainingAmount.toNumber()).toBe(E2E_AMOUNT);
+
+      // The outbox marks an event processed after publishing it, so a valid
+      // asynchronous refund can be readable as settled before this flips.
+      let refundedEvent = await prisma.outboxEvent.findFirst({
+        where: { eventType: "InvoiceRefunded", aggregateId: state.invoiceId }
+      });
+      const outboxDeadline = Date.now() + 30_000;
+      while (!refundedEvent?.processed && Date.now() < outboxDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        refundedEvent = await prisma.outboxEvent.findFirst({
+          where: { eventType: "InvoiceRefunded", aggregateId: state.invoiceId }
+        });
+      }
+      expect(refundedEvent?.processed).toBe(true);
+
+      const gatewayRefund = await findGatewayRefund(paymentRow.gatewayPaymentId, refundRow.id);
+      if (!gatewayRefund) {
+        throw new Error(
+          "Razorpay does not list a refund matching this request; the create-refund call or its notes echo did not round-trip."
+        );
+      }
+      expect(gatewayRefund.amount).toBe(E2E_AMOUNT * 100);
+      expect(gatewayRefund.currency).toBe("INR");
+
+      console.log(
+        settledByWebhook
+          ? `Refund verified: Razorpay accepted ${gatewayRefund.id} and the signed refund.processed webhook completed it.`
+          : `Refund verified: Razorpay processed ${gatewayRefund.id} in the refund response.`
+      );
+      console.log(
+        "Inbound E2E verified: payment CONFIRMED then REFUNDED, invoice PAID then SENT, receivable settled then reopened."
+      );
     },
-    20 * 60 * 1000
+    25 * 60 * 1000
   );
 });
