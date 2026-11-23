@@ -29,6 +29,7 @@ import {
   Invoice,
   InvoiceId,
   InvoiceNumber,
+  InvoiceStatus,
   issueInvoice as issueInvoiceOperation,
   markInvoiceSent,
   recordPayment,
@@ -2205,6 +2206,16 @@ export class AcosIntegrationBoundary {
         );
         addInvoiceRefund(invoice, share.amount.amount);
       }
+    }
+
+    // When the refund recalled credit from another invoice, the payment's own
+    // invoice is not in the ledger pass, yet the refund lowered what this
+    // payment leaves paid on it: an overpayment turns back into a paid invoice.
+    if (
+      anchorInvoice.status === InvoiceStatus.OVERPAID &&
+      !refundedByInvoice.has(anchorInvoice.id.value)
+    ) {
+      refundedByInvoice.set(anchorInvoice.id.value, { invoice: anchorInvoice, amount });
     }
 
     if (arDirty) {

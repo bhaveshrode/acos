@@ -244,8 +244,8 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       ar.addInvoice(new UniqueEntityID(), invA, Money.create(100, "USDC").value, new Date());
       ar.addInvoice(new UniqueEntityID(), invB, Money.create(80, "USDC").value, new Date());
 
-      // 120 against an 80 invoice: 80 applied, 20 left as credit for settlement S.
-      ar.applyPayment(new UniqueEntityID(), settlement, invB, Money.create(120, "USDC").value, policy);
+      // 100 against an 80 invoice: 80 applied, 20 left as credit for settlement S.
+      ar.applyPayment(new UniqueEntityID(), settlement, invB, Money.create(100, "USDC").value, policy);
       expect(ar.paymentApplications).toHaveLength(1);
       expect(ar.getCreditBalance("USDC").amount).toBe(20);
 
