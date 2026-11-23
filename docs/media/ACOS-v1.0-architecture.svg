@@ -1,0 +1,298 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2000" viewBox="0 0 1600 2000">
+  <defs>
+    <linearGradient id="topLine" x1="0" y1="0" x2="1600" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2DD4BF"/>
+      <stop offset="0.5" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <radialGradient id="glowTeal" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2DD4BF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#2DD4BF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowViolet" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#A78BFA" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#A78BFA" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="36" height="36" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#22314A" opacity="0.5"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+    <marker id="arrowGray" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#64748B"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2DD4BF"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#FBBF24"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="2000" fill="#070D1A"/>
+  <rect width="1600" height="2000" fill="url(#dots)"/>
+  <ellipse cx="220" cy="180" rx="620" ry="470" fill="url(#glowTeal)"/>
+  <ellipse cx="1440" cy="1740" rx="640" ry="520" fill="url(#glowViolet)"/>
+  <rect x="0" y="0" width="1600" height="5" fill="url(#topLine)"/>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <!-- Header -->
+    <text x="60" y="96" font-size="18" font-weight="600" letter-spacing="6" fill="#5EEAD4">ACOS / V1.0</text>
+    <text x="58" y="178" font-size="86" font-weight="700" fill="#F4F8FF">Architecture</text>
+    <text x="60" y="224" font-size="27" fill="#A6B6CC">Domain-driven commerce kernel · runtime · merchant application</text>
+
+    <rect x="1210" y="92" width="330" height="46" rx="23" fill="#0C2527" stroke="#2DD4BF" stroke-opacity="0.55"/>
+    <text x="1375" y="121" text-anchor="middle" font-size="16" font-weight="700" letter-spacing="3" fill="#5EEAD4">V1.0 COMPLETE</text>
+    <text x="1540" y="180" text-anchor="end" font-size="16" fill="#7C8DA8">TypeScript · Node.js · PostgreSQL · Redis</text>
+    <text x="1540" y="208" text-anchor="end" font-size="16" fill="#52637D">DDD + CQRS · hexagonal adapters</text>
+    <line x1="60" y1="252" x2="1540" y2="252" stroke="#1E2C45" stroke-width="1"/>
+
+    <!-- Runtime host -->
+    <rect x="60" y="290" width="250" height="1330" rx="24" fill="#0B1424" stroke="#1E2C45" filter="url(#shadow)"/>
+    <rect x="64" y="314" width="6" height="1282" rx="3" fill="#94A3B8" opacity="0.65"/>
+    <text x="92" y="334" font-size="15" font-weight="700" letter-spacing="3" fill="#94A3B8">RUNTIME HOST</text>
+    <text x="92" y="362" font-size="17" fill="#5E708C" font-family="Consolas, Cascadia Mono, monospace">acos-runtime</text>
+    <line x1="92" y1="386" x2="282" y2="386" stroke="#1E2C45" stroke-width="1"/>
+
+    <g>
+      <circle cx="96" cy="420" r="15" fill="#111E33" stroke="#334155"/>
+      <text x="96" y="426" text-anchor="middle" font-size="13" fill="#CBD5E1">1</text>
+      <text x="122" y="426" font-size="19" font-weight="600" fill="#E8F0FB">Resolve config</text>
+      <text x="122" y="452" font-size="15" fill="#7C8DA8">environment +</text>
+      <text x="122" y="472" font-size="15" fill="#7C8DA8">overrides</text>
+    </g>
+    <g>
+      <circle cx="96" cy="600" r="15" fill="#111E33" stroke="#334155"/>
+      <text x="96" y="606" text-anchor="middle" font-size="13" fill="#CBD5E1">2</text>
+      <text x="122" y="606" font-size="19" font-weight="600" fill="#E8F0FB">Validate graph</text>
+      <text x="122" y="632" font-size="15" fill="#7C8DA8">composition</text>
+      <text x="122" y="652" font-size="15" fill="#7C8DA8">contract</text>
+    </g>
+    <g>
+      <circle cx="96" cy="780" r="15" fill="#111E33" stroke="#334155"/>
+      <text x="96" y="786" text-anchor="middle" font-size="13" fill="#CBD5E1">3</text>
+      <text x="122" y="786" font-size="19" font-weight="600" fill="#E8F0FB">Topological boot</text>
+      <text x="122" y="812" font-size="15" fill="#7C8DA8">dependency order</text>
+    </g>
+    <g>
+      <circle cx="96" cy="960" r="15" fill="#111E33" stroke="#334155"/>
+      <text x="96" y="966" text-anchor="middle" font-size="13" fill="#CBD5E1">4</text>
+      <text x="122" y="966" font-size="19" font-weight="600" fill="#E8F0FB">Lifecycle + health</text>
+      <text x="122" y="992" font-size="15" fill="#7C8DA8">state + readiness</text>
+    </g>
+    <g>
+      <circle cx="96" cy="1140" r="15" fill="#111E33" stroke="#334155"/>
+      <text x="96" y="1146" text-anchor="middle" font-size="13" fill="#CBD5E1">5</text>
+      <text x="122" y="1146" font-size="19" font-weight="600" fill="#E8F0FB">Reverse shutdown</text>
+      <text x="122" y="1172" font-size="15" fill="#7C8DA8">drain consumers</text>
+    </g>
+
+    <rect x="84" y="1234" width="202" height="128" rx="14" fill="#121A2B" stroke="#2A2418"/>
+    <text x="104" y="1262" font-size="13" font-weight="700" letter-spacing="2" fill="#FBBF24">FAIL-CLOSED</text>
+    <text x="104" y="1290" font-size="15" fill="#A6B6CC">Validation failure</text>
+    <text x="104" y="1310" font-size="15" fill="#A6B6CC">aborts startup.</text>
+    <text x="104" y="1338" font-size="15" fill="#FBBF24">No partial kernel.</text>
+
+    <text x="92" y="1444" font-size="13" font-weight="700" letter-spacing="2" fill="#52637D">TELEMETRY</text>
+    <text x="92" y="1472" font-size="15" fill="#7C8DA8">traces per subsystem</text>
+    <text x="92" y="1524" font-size="13" font-weight="700" letter-spacing="2" fill="#52637D">HOSTS + SUPERVISES</text>
+    <text x="92" y="1552" font-size="15" fill="#A6B6CC">the kernel stack</text>
+
+    <!-- Merchant application -->
+    <rect x="330" y="290" width="770" height="210" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="330" y="314" width="6" height="162" rx="3" fill="#FBBF24"/>
+    <text x="366" y="322" font-size="13" font-weight="700" letter-spacing="2.5" fill="#FBBF24">PRODUCT · VALIDATION</text>
+    <text x="366" y="366" font-size="34" font-weight="700" fill="#F4F8FF">Merchant application</text>
+    <text x="366" y="400" font-size="18" fill="#A6B6CC">Express HTTP surface · 6 controllers · request / response</text>
+    <text x="1070" y="364" text-anchor="end" font-size="26" font-weight="700" fill="#FBBF24">25 routes</text>
+    <text x="1070" y="390" text-anchor="end" font-size="15" fill="#7C8DA8">HTTP surface</text>
+
+    <rect x="366" y="424" width="110" height="44" rx="10" fill="#14213A" stroke="#2A3A57"/>
+    <text x="421" y="451" text-anchor="middle" font-size="16" fill="#C7D2E5">Sessions</text>
+    <rect x="488" y="424" width="150" height="44" rx="10" fill="#14213A" stroke="#2A3A57"/>
+    <text x="563" y="451" text-anchor="middle" font-size="16" fill="#C7D2E5">Idempotency</text>
+    <rect x="650" y="424" width="130" height="44" rx="10" fill="#14213A" stroke="#2A3A57"/>
+    <text x="715" y="451" text-anchor="middle" font-size="16" fill="#C7D2E5">Webhooks</text>
+    <rect x="792" y="424" width="170" height="44" rx="10" fill="#14213A" stroke="#2A3A57"/>
+    <text x="877" y="451" text-anchor="middle" font-size="16" fill="#C7D2E5">Correlation ID</text>
+    <rect x="974" y="424" width="96" height="44" rx="10" fill="#14213A" stroke="#2A3A57"/>
+    <text x="1022" y="451" text-anchor="middle" font-size="16" fill="#C7D2E5">Caches</text>
+
+    <!-- Integration boundary -->
+    <rect x="330" y="540" width="770" height="160" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="330" y="564" width="6" height="112" rx="3" fill="#38BDF8"/>
+    <text x="366" y="568" font-size="13" font-weight="700" letter-spacing="2.5" fill="#38BDF8">INTEGRATION BOUNDARY</text>
+    <text x="366" y="608" font-size="28" font-weight="700" fill="#F4F8FF">AcosIntegrationBoundary</text>
+    <text x="366" y="644" font-size="18" fill="#A6B6CC">tenant scoping · transactions · DTO mapping</text>
+    <text x="366" y="672" font-size="18" fill="#A6B6CC">refund reservation · webhook reconciliation</text>
+
+    <!-- Kernel surface -->
+    <rect x="330" y="740" width="770" height="180" rx="22" fill="#0C1B22" stroke="#2DD4BF" stroke-opacity="0.55" filter="url(#shadow)"/>
+    <rect x="330" y="764" width="6" height="132" rx="3" fill="#2DD4BF"/>
+    <text x="366" y="768" font-size="13" font-weight="700" letter-spacing="2.5" fill="#5EEAD4">PINNED PUBLIC SURFACE</text>
+    <text x="366" y="808" font-size="32" font-weight="700" fill="#F4F8FF">ACOS kernel</text>
+
+    <rect x="366" y="818" width="42" height="34" rx="8" fill="#102A2C" stroke="#2DD4BF" stroke-opacity="0.45"/>
+    <text x="387" y="841" text-anchor="middle" font-size="17" fill="#5EEAD4" font-family="Consolas, Cascadia Mono, monospace">.</text>
+    <rect x="418" y="818" width="166" height="34" rx="8" fill="#102A2C" stroke="#2DD4BF" stroke-opacity="0.45"/>
+    <text x="501" y="841" text-anchor="middle" font-size="17" fill="#5EEAD4" font-family="Consolas, Cascadia Mono, monospace">./application</text>
+    <text x="606" y="841" font-size="15" fill="#7C8DA8">no wildcard exports · no deep imports</text>
+
+    <text x="366" y="892" font-size="26" font-weight="700" fill="#5EEAD4">389</text>
+    <text x="366" y="910" font-size="13" fill="#7C8DA8">exports at .</text>
+    <line x1="548" y1="870" x2="548" y2="906" stroke="#22314A"/>
+    <text x="576" y="892" font-size="26" font-weight="700" fill="#5EEAD4">29</text>
+    <text x="576" y="910" font-size="13" fill="#7C8DA8">exports at ./application</text>
+    <line x1="794" y1="870" x2="794" y2="906" stroke="#22314A"/>
+    <text x="822" y="892" font-size="26" font-weight="700" fill="#5EEAD4">22</text>
+    <text x="822" y="910" font-size="13" fill="#7C8DA8">named operations</text>
+
+    <!-- Application layer -->
+    <rect x="330" y="960" width="770" height="150" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="330" y="984" width="6" height="102" rx="3" fill="#60A5FA"/>
+    <text x="366" y="986" font-size="13" font-weight="700" letter-spacing="2.5" fill="#60A5FA">USE CASES</text>
+    <text x="1070" y="986" text-anchor="end" font-size="14" fill="#60A5FA">29 exports at ./application</text>
+    <text x="366" y="1024" font-size="28" font-weight="700" fill="#F4F8FF">Application layer</text>
+
+    <rect x="366" y="1040" width="110" height="40" rx="9" fill="#14213A" stroke="#2A3A57"/>
+    <text x="421" y="1066" text-anchor="middle" font-size="16" fill="#C7D2E5">Mediator</text>
+    <rect x="488" y="1040" width="130" height="40" rx="9" fill="#14213A" stroke="#2A3A57"/>
+    <text x="553" y="1066" text-anchor="middle" font-size="16" fill="#C7D2E5">Commands</text>
+    <rect x="630" y="1040" width="130" height="40" rx="9" fill="#14213A" stroke="#2A3A57"/>
+    <text x="695" y="1066" text-anchor="middle" font-size="16" fill="#C7D2E5">Handlers</text>
+    <rect x="772" y="1040" width="120" height="40" rx="9" fill="#14213A" stroke="#2A3A57"/>
+    <text x="832" y="1066" text-anchor="middle" font-size="16" fill="#C7D2E5">Queries</text>
+    <rect x="904" y="1040" width="120" height="40" rx="9" fill="#14213A" stroke="#2A3A57"/>
+    <text x="964" y="1066" text-anchor="middle" font-size="16" fill="#C7D2E5">Mappers</text>
+
+    <!-- Domain contexts -->
+    <rect x="330" y="1150" width="770" height="470" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="330" y="1174" width="6" height="422" rx="3" fill="#A78BFA"/>
+    <text x="366" y="1180" font-size="13" font-weight="700" letter-spacing="2.5" fill="#A78BFA">DOMAIN</text>
+    <text x="1070" y="1180" text-anchor="end" font-size="15" fill="#7C8DA8">9 bounded contexts · 93 domain events</text>
+
+    <rect x="354" y="1208" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="470" y="1248" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Identity</text>
+    <rect x="599" y="1208" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="715" y="1248" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Organization</text>
+    <rect x="844" y="1208" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="960" y="1248" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Customer</text>
+
+    <rect x="354" y="1290" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="470" y="1330" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Invoice</text>
+    <rect x="599" y="1290" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="715" y="1330" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Payment</text>
+    <rect x="844" y="1290" width="232" height="66" rx="14" fill="#1C1A3A" stroke="#A78BFA" stroke-width="1.5"/>
+    <text x="960" y="1330" text-anchor="middle" font-size="20" font-weight="600" fill="#E9E4FF">Accounts receivable</text>
+
+    <rect x="354" y="1372" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="470" y="1412" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Settlement</text>
+    <rect x="599" y="1372" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="715" y="1412" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Notification</text>
+    <rect x="844" y="1372" width="232" height="66" rx="14" fill="#151A33" stroke="#3A3560"/>
+    <text x="960" y="1412" text-anchor="middle" font-size="20" font-weight="600" fill="#D8D2F5">Workflow</text>
+
+    <rect x="354" y="1458" width="722" height="70" rx="14" fill="#1A1733" stroke="#3A3560"/>
+    <text x="374" y="1486" font-size="18" font-weight="700" fill="#C4B5FD">Accounts receivable</text>
+    <text x="374" y="1512" font-size="15" fill="#9E9AC8">receivable subledger · customer credit · applications · collection actions</text>
+
+    <rect x="354" y="1542" width="722" height="52" rx="14" fill="#101B2E" stroke="#22314A"/>
+    <text x="374" y="1574" font-size="16" fill="#A6B6CC">Money = integer minor units + ISO 4217 exponent</text>
+    <text x="1058" y="1574" text-anchor="end" font-size="15" fill="#5EEAD4" font-family="Consolas, Cascadia Mono, monospace">PostgreSQL Decimal(18,4)</text>
+
+    <!-- Adapters rail header -->
+    <text x="1180" y="322" font-size="15" font-weight="700" letter-spacing="3" fill="#64748B">ADAPTERS</text>
+    <text x="1180" y="352" font-size="16" fill="#52637D">Persistence · delivery</text>
+    <text x="1180" y="376" font-size="16" fill="#52637D">gateway edges</text>
+
+    <!-- Payment providers -->
+    <rect x="1180" y="540" width="320" height="160" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="1180" y="564" width="6" height="112" rx="3" fill="#F472B6"/>
+    <text x="1212" y="568" font-size="13" font-weight="700" letter-spacing="2.5" fill="#F472B6">GATEWAY</text>
+    <text x="1212" y="606" font-size="24" font-weight="700" fill="#F4F8FF">Payment providers</text>
+    <text x="1212" y="640" font-size="17" fill="#A6B6CC">sandbox · Razorpay REST</text>
+    <text x="1212" y="666" font-size="17" fill="#A6B6CC">links · refunds · webhooks</text>
+
+    <!-- PostgreSQL -->
+    <rect x="1180" y="740" width="320" height="180" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="1180" y="764" width="6" height="132" rx="3" fill="#34D399"/>
+    <text x="1212" y="768" font-size="13" font-weight="700" letter-spacing="2.5" fill="#34D399">PERSISTENCE</text>
+    <text x="1212" y="806" font-size="26" font-weight="700" fill="#F4F8FF">PostgreSQL</text>
+    <text x="1212" y="840" font-size="17" fill="#A6B6CC">17 models · 7 migrations</text>
+    <text x="1212" y="866" font-size="17" fill="#A6B6CC">Decimal(18,4) money</text>
+    <text x="1212" y="892" font-size="17" fill="#A6B6CC">Prisma Client · repository ports</text>
+
+    <!-- Outbox -->
+    <rect x="1180" y="960" width="320" height="150" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="1180" y="984" width="6" height="102" rx="3" fill="#FBBF24"/>
+    <text x="1212" y="986" font-size="13" font-weight="700" letter-spacing="2.5" fill="#FBBF24">RELIABILITY</text>
+    <text x="1212" y="1022" font-size="23" font-weight="700" fill="#F4F8FF">Transactional outbox</text>
+    <text x="1212" y="1052" font-size="16" fill="#A6B6CC">same commit as aggregate</text>
+    <text x="1212" y="1078" font-size="16" fill="#A6B6CC">lease · 10 attempts · dead-letter</text>
+
+    <!-- Redis Streams -->
+    <rect x="1180" y="1150" width="320" height="170" rx="22" fill="#0F1A2D" stroke="#2A3A57" filter="url(#shadow)"/>
+    <rect x="1180" y="1174" width="6" height="122" rx="3" fill="#F87171"/>
+    <text x="1212" y="1176" font-size="13" font-weight="700" letter-spacing="2.5" fill="#F87171">BROKER</text>
+    <text x="1212" y="1212" font-size="24" font-weight="700" fill="#F4F8FF">Redis Streams</text>
+    <text x="1212" y="1246" font-size="16" fill="#A6B6CC">acos.events · per-replica groups</text>
+    <text x="1212" y="1272" font-size="16" fill="#A6B6CC">XAUTOCLAIM 30s · eventId dedupe</text>
+    <text x="1212" y="1298" font-size="16" fill="#A6B6CC">dead-letter: acos.events.dead</text>
+
+    <!-- Legend -->
+    <rect x="1180" y="1360" width="320" height="250" rx="22" fill="#0B1424" stroke="#1E2C45"/>
+    <text x="1204" y="1398" font-size="13" font-weight="700" letter-spacing="3" fill="#64748B">LEGEND</text>
+    <line x1="1204" y1="1438" x2="1268" y2="1438" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <text x="1284" y="1444" font-size="16" fill="#A6B6CC">synchronous call</text>
+    <line x1="1204" y1="1488" x2="1268" y2="1488" stroke="#2DD4BF" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrowTeal)"/>
+    <text x="1284" y="1494" font-size="16" fill="#A6B6CC">domain event</text>
+    <line x1="1204" y1="1538" x2="1268" y2="1538" stroke="#FBBF24" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrowAmber)"/>
+    <text x="1284" y="1544" font-size="16" fill="#A6B6CC">gateway webhook</text>
+    <text x="1204" y="1584" font-size="14" fill="#52637D">Runtime host on the left;</text>
+    <text x="1204" y="1604" font-size="14" fill="#52637D">adapters on the right.</text>
+
+    <!-- Flow arrows -->
+    <line x1="715" y1="500" x2="715" y2="540" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <line x1="715" y1="700" x2="715" y2="740" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <line x1="715" y1="920" x2="715" y2="960" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <line x1="715" y1="1110" x2="715" y2="1150" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+
+    <line x1="1100" y1="620" x2="1180" y2="620" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <text x="1140" y="606" text-anchor="middle" font-size="13" fill="#7C8DA8">outbound</text>
+
+    <path d="M 1200 540 C 1182 518 1124 506 1040 500" fill="none" stroke="#FBBF24" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrowAmber)"/>
+    <text x="1232" y="526" font-size="13" fill="#FBBF24">webhooks</text>
+
+    <line x1="1100" y1="830" x2="1180" y2="830" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <text x="1140" y="816" text-anchor="middle" font-size="13" fill="#7C8DA8">Prisma</text>
+
+    <line x1="1100" y1="1035" x2="1180" y2="1035" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <text x="1140" y="1021" text-anchor="middle" font-size="13" fill="#7C8DA8">same tx</text>
+
+    <line x1="1340" y1="1110" x2="1340" y2="1150" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+    <text x="1354" y="1136" font-size="13" fill="#7C8DA8">drain</text>
+
+    <path d="M 1500 1235 H 1528 Q 1540 1235 1540 1223 V 432 Q 1540 420 1528 420 H 1100" fill="none" stroke="#2DD4BF" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrowTeal)"/>
+    <text transform="translate(1556 850) rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" letter-spacing="2.5" fill="#2DD4BF">EVENTS → CACHE INVALIDATION</text>
+
+    <line x1="310" y1="830" x2="330" y2="830" stroke="#64748B" stroke-width="2.5" marker-end="url(#arrowGray)"/>
+
+    <!-- Footer -->
+    <line x1="60" y1="1660" x2="1540" y2="1660" stroke="#1E2C45" stroke-width="1"/>
+    <text x="60" y="1712" font-size="13" font-weight="700" letter-spacing="3" fill="#64748B">VALIDATION</text>
+    <text x="60" y="1752" font-size="30" font-weight="700" fill="#F4F8FF">498 tests passing</text>
+    <text x="60" y="1788" font-size="19" fill="#A6B6CC">342 kernel · 7 runtime · 149 merchant · 5 skipped</text>
+    <text x="60" y="1818" font-size="17" fill="#7C8DA8">PostgreSQL 15 + Redis 7 · schema drift gate</text>
+
+    <text x="860" y="1712" font-size="13" font-weight="700" letter-spacing="3" fill="#64748B">EXECUTED EVIDENCE</text>
+    <circle cx="868" cy="1742" r="4" fill="#2DD4BF"/>
+    <text x="882" y="1752" font-size="24" font-weight="700" fill="#F4F8FF">Razorpay test mode</text>
+    <text x="860" y="1788" font-size="18" fill="#A6B6CC">payment links · paid webhook · refund + refund webhook</text>
+    <circle cx="868" cy="1810" r="4" fill="#FBBF24"/>
+    <text x="882" y="1818" font-size="17" fill="#FBBF24">async pending-refund settlement: unobserved</text>
+
+    <text x="60" y="1888" font-size="17" fill="#52637D">Verified behavior over assumed behavior.</text>
+    <text x="1540" y="1888" text-anchor="end" font-size="15" fill="#475569">ACOS v1.0 · 2026</text>
+  </g>
+</svg>
