@@ -2190,8 +2190,13 @@ export class AcosIntegrationBoundary {
       }
       const { reversed, remainder, shares: appliedShares } = reversalRes.value;
       if (remainder.amount > 0) {
-        throw new Error(
-          `Refund reversal could not attribute ${remainder.amount} ${currency} of payment ${payment.id.value} to any receivable application.`
+        // Credit spent before applications were recorded has no ledger target,
+        // so part of the refund cannot be attributed. The gateway has already
+        // returned the money: failing here would roll the reversal back and
+        // leave the refund stuck in APPROVED across every re-delivery.
+        this.logger.warn(
+          "refundPayment: Refund amount could not be attributed to a receivable application; leaving it unreconciled.",
+          { paymentId: payment.id.value, amount: remainder.amount, currency }
         );
       }
       if (reversed.amount > 0) {
@@ -2557,14 +2562,53 @@ export class AcosIntegrationBoundary {
     if (orgRes.isFailure) throw new Error("Organization not found");
     const currency = orgRes.value.settings.defaultCurrency.value;
 
-    let totalOutstanding = 0;
+    const ledgerAccounts: AccountsReceivable[] = [];
+    if ("items" in this.accountsReceivableRepository) {
+      for (const ar of (this.accountsReceivableRepository as any).items.values()) {
+        if (ar.organizationId.value === orgId) {
+          ledgerAccounts.push(ar);
+        }
+      }
+    } else {
+      const prisma = (this.accountsReceivableRepository as any).prisma;
+      if (prisma) {
+        const rows = await prisma.receivableAccount.findMany({
+          where: { organizationId: orgId }
+        });
+        for (const row of rows) {
+          const res = await this.accountsReceivableRepository.findById(new ReceivableAccountId(row.id));
+          if (res.isSuccess) {
+            ledgerAccounts.push(res.value);
+          }
+        }
+      }
+    }
+
+    // The ledger records every settlement, including credit that moved no
+    // payment row, so its remaining balance is the outstanding figure.
+    const remainingByInvoice = new Map<string, number>();
     let totalCredit = 0;
+    for (const ar of ledgerAccounts) {
+      totalCredit += getReceivableCreditBalance(ar, currency).amount;
+      for (const entry of ar.entries) {
+        if (entry.remainingBalance.currency === currency) {
+          remainingByInvoice.set(entry.invoiceId.value, entry.remainingBalance.amount);
+        }
+      }
+    }
+
+    let totalOutstanding = 0;
 
     for (const inv of invoices) {
       const isSent = inv.sentAt !== null;
       if (inv.status === "ISSUED" && isSent) {
         totalOutstanding += inv.grandTotal.amount;
       } else if (inv.status === "PARTIALLY_PAID") {
+        const ledgerRemaining = remainingByInvoice.get(inv.id.value);
+        if (ledgerRemaining !== undefined) {
+          totalOutstanding += Math.max(0, ledgerRemaining);
+          continue;
+        }
         let paidAmount = 0;
         const allPaymentsRes = await this.paymentRepository.findByInvoice(new OrganizationId(orgId), inv.id);
         if (allPaymentsRes.isSuccess) {
@@ -2579,27 +2623,6 @@ export class AcosIntegrationBoundary {
           }
         }
         totalOutstanding += Math.max(0, inv.grandTotal.amount - paidAmount);
-      }
-    }
-
-    if ("items" in this.accountsReceivableRepository) {
-      for (const ar of (this.accountsReceivableRepository as any).items.values()) {
-        if (ar.organizationId.value === orgId) {
-          totalCredit += getReceivableCreditBalance(ar, currency).amount;
-        }
-      }
-    } else {
-      const prisma = (this.accountsReceivableRepository as any).prisma;
-      if (prisma) {
-        const rows = await prisma.receivableAccount.findMany({
-          where: { organizationId: orgId }
-        });
-        for (const row of rows) {
-          const res = await this.accountsReceivableRepository.findById(new ReceivableAccountId(row.id));
-          if (res.isSuccess) {
-            totalCredit += res.value.getCreditBalance(currency).amount;
-          }
-        }
       }
     }
 
