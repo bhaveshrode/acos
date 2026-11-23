@@ -917,7 +917,7 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
     });
   });
 
-  describe("Asynchronous Refund Settlement (Gateway Webhook)", () => {
+  describe("Ledger Settlement — Refund Reversals and Customer Credit (Gateway Webhook)", () => {
     const password = "PasswordPlaintext123!";
 
     class DeferredRefundProvider implements IPaymentProvider {
@@ -1169,6 +1169,94 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("ISSUED");
         expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(100);
         expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("applies an overpayment's credit to another outstanding invoice", async () => {
+      const provider = new DeferredRefundProvider();
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer } = await setupConfirmedPayment(localBoundary, "credit-shop", 100, 150);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(50);
+
+        const second = await localBoundary.createInvoice(user.id, {
+          organizationId: org.id,
+          customerId: customer.id,
+          invoiceNumber: "INV-ASYNC-002",
+          currency: "USD",
+          paymentTerms: "NET_30",
+          issueDate: new Date().toISOString(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          lines: [{ description: "Second project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+        });
+        await localBoundary.issueInvoice(user.id, second.id);
+        await localBoundary.sendInvoice(user.id, second.id);
+        // The ledger books an obligation when money moves, not at send time.
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        const applied = await localBoundary.applyCreditToInvoice(user.id, second.id, 50);
+        expect(applied.amountApplied).toBe(50);
+        expect(applied.invoiceStatus).toBe("PARTIALLY_PAID");
+        expect(applied.outstandingBalance).toBe(50);
+        expect(applied.creditBalance).toBe(0);
+
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("PARTIALLY_PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(50);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
+
+        // The credit is spent: a further application is rejected untouched.
+        await expect(localBoundary.applyCreditToInvoice(user.id, second.id, 10)).rejects.toThrow(
+          /Insufficient credit balance/
+        );
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("PARTIALLY_PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(50);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
+    it("settles an invoice with the remaining credit and refuses unsent invoices", async () => {
+      const provider = new DeferredRefundProvider();
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer } = await setupConfirmedPayment(localBoundary, "credit-full-shop", 100, 150);
+
+        const second = await localBoundary.createInvoice(user.id, {
+          organizationId: org.id,
+          customerId: customer.id,
+          invoiceNumber: "INV-ASYNC-003",
+          currency: "USD",
+          paymentTerms: "NET_30",
+          issueDate: new Date().toISOString(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          lines: [{ description: "Small project", quantity: 1, unitPrice: 50, taxRate: 0 }]
+        });
+        await localBoundary.issueInvoice(user.id, second.id);
+        await localBoundary.sendInvoice(user.id, second.id);
+
+        // Omitting the amount applies the whole credit (50 of 50 due).
+        const applied = await localBoundary.applyCreditToInvoice(user.id, second.id);
+        expect(applied.amountApplied).toBe(50);
+        expect(applied.invoiceStatus).toBe("PAID");
+        expect(applied.outstandingBalance).toBe(0);
+        expect(applied.creditBalance).toBe(0);
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        // A draft invoice has no outstanding obligation yet.
+        const draft = await localBoundary.createInvoice(user.id, {
+          organizationId: org.id,
+          customerId: customer.id,
+          invoiceNumber: "INV-ASYNC-004",
+          currency: "USD",
+          paymentTerms: "NET_30",
+          issueDate: new Date().toISOString(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          lines: [{ description: "Draft project", quantity: 1, unitPrice: 10, taxRate: 0 }]
+        });
+        await expect(localBoundary.applyCreditToInvoice(user.id, draft.id, 10)).rejects.toThrow(/SENT invoices/);
       } finally {
         await localBoundary.disconnect();
       }

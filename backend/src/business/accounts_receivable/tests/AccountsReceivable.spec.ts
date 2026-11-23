@@ -35,6 +35,7 @@ import { CollectionPolicy } from "../services/CollectionPolicy.js";
 import { CreditAllocationPolicy } from "../services/CreditAllocationPolicy.js";
 import { ReceivablePolicy } from "../services/ReceivablePolicy.js";
 import { refundCustomerCredit } from "../operations/RefundCustomerCredit.js";
+import { applyCustomerCredit } from "../operations/ApplyCustomerCredit.js";
 
 import { ReceivableCanBeClosed } from "../specifications/ReceivableCanBeClosed.js";
 import { ReceivableCanBeWrittenOff } from "../specifications/ReceivableCanBeWrittenOff.js";
@@ -251,6 +252,49 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       expect(res.isSuccess).toBe(true);
       expect(ar.entries[0].remainingBalance.amount).toBe(70);
       expect(ar.customerCredits[0].remainingBalance.amount).toBe(10);
+    });
+
+    it("should apply available credit oldest first and refuse amounts the ledger cannot cover", () => {
+      const ar = AccountsReceivable.create(accId, orgId, custId).value;
+      const invA = InvoiceId.generate();
+      const invB = InvoiceId.generate();
+      const policy = new CreditAllocationPolicy();
+
+      ar.addInvoice(new UniqueEntityID(), invA, Money.create(100, "USDC").value, new Date());
+      ar.addInvoice(new UniqueEntityID(), invB, Money.create(80, "USDC").value, new Date());
+
+      // Two payments against unregistered invoices book 30 + 50 of credit.
+      ar.applyPayment(new UniqueEntityID(), SettlementId.generate(), InvoiceId.generate(), Money.create(30, "USDC").value, policy);
+      ar.applyPayment(new UniqueEntityID(), SettlementId.generate(), InvoiceId.generate(), Money.create(50, "USDC").value, policy);
+      expect(ar.getCreditBalance("USDC").amount).toBe(80);
+
+      const res = applyCustomerCredit(ar, invA, Money.create(60, "USDC").value);
+      expect(res.isSuccess).toBe(true);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invA))!.remainingBalance.amount).toBe(40);
+      // The oldest credit is consumed before the newer one.
+      expect(ar.customerCredits[0].remainingBalance.amount).toBe(0);
+      expect(ar.customerCredits[1].remainingBalance.amount).toBe(20);
+      expect(ar.getCreditBalance("USDC").amount).toBe(20);
+      expect(ar.domainEvents.map((e) => e.eventName)).toContain("CustomerCreditApplied");
+
+      // Rejections leave the credit untouched.
+      const zero = applyCustomerCredit(ar, invA, Money.create(0, "USDC").value);
+      expect(zero.isFailure).toBe(true);
+
+      const beyondInvoice = applyCustomerCredit(ar, invA, Money.create(50, "USDC").value);
+      expect(beyondInvoice.isFailure).toBe(true);
+
+      const beyondCredit = applyCustomerCredit(ar, invA, Money.create(25, "USDC").value);
+      expect(beyondCredit.isFailure).toBe(true);
+
+      expect(ar.getCreditBalance("USDC").amount).toBe(20);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invA))!.remainingBalance.amount).toBe(40);
+
+      // The remaining credit still settles the other invoice.
+      const rest = applyCustomerCredit(ar, invB, Money.create(20, "USDC").value);
+      expect(rest.isSuccess).toBe(true);
+      expect(ar.entries.find((entry) => entry.invoiceId.equals(invB))!.remainingBalance.amount).toBe(60);
+      expect(ar.getCreditBalance("USDC").amount).toBe(0);
     });
 
     it("should support debt write-off operations", () => {

@@ -47,6 +47,43 @@ export class PaymentController extends BaseController {
       }
     }
 
+    if (method === "POST" && path.startsWith("/business/invoices/") && path.endsWith("/apply-credit")) {
+      const token = this.extractBearerToken(headers);
+      if (!token) {
+        return {
+          status: 401,
+          body: { error: "Unauthorized: Missing session token." }
+        };
+      }
+
+      let userProfile;
+      try {
+        userProfile = await this.acosBoundary.me(token);
+      } catch (err: any) {
+        return {
+          status: 401,
+          body: { error: "Unauthorized", message: err.message }
+        };
+      }
+
+      const invoiceId = path.substring("/business/invoices/".length, path.length - "/apply-credit".length);
+      try {
+        const applied = await this.acosBoundary.applyCreditToInvoice(userProfile.id, invoiceId, payload?.amount);
+        return {
+          status: 200,
+          body: applied
+        };
+      } catch (err: any) {
+        this.logger.warn("Credit application rejected by boundary", { invoiceId, error: err.message });
+        const isAccessDenied = err.message.includes("Access Denied");
+        const isNotFound = err.message.includes("not found");
+        return {
+          status: isAccessDenied ? 403 : (isNotFound ? 404 : 400),
+          body: { error: isAccessDenied ? "Forbidden" : "Credit Application Failed", message: err.message }
+        };
+      }
+    }
+
     if (method === "POST" && path.startsWith("/business/payments/") && path.endsWith("/refund")) {
       const token = this.extractBearerToken(headers);
       if (!token) {

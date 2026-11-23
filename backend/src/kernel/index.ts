@@ -94,6 +94,7 @@ export { RefundApplied } from "../business/accounts_receivable/events/RefundAppl
 export { ReceivableClosed } from "../business/accounts_receivable/events/ReceivableClosed.js";
 export { ReceivableCreated } from "../business/accounts_receivable/events/ReceivableCreated.js";
 export { ReceivableWrittenOff } from "../business/accounts_receivable/events/ReceivableWrittenOff.js";
+export { applyCustomerCredit } from "../business/accounts_receivable/operations/ApplyCustomerCredit.js";
 export { applyRefund } from "../business/accounts_receivable/operations/ApplyRefund.js";
 export { applyReceivablePayment } from "../business/accounts_receivable/operations/ApplyReceivablePayment.js";
 export { getReceivableCreditBalance } from "../business/accounts_receivable/operations/GetReceivableCreditBalance.js";

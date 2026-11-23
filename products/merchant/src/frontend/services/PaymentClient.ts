@@ -20,6 +20,25 @@ export class PaymentClient extends BaseClient {
     return response.body;
   }
 
+  public async applyCreditToInvoice(invoiceId: string, amount?: number): Promise<any> {
+    this.ctx.logger.info("Frontend: Requesting credit application...", { invoiceId, amount });
+    const headers = this.ctx.getHeaders();
+    const response = await this.ctx.backend.handleRequest(
+      "POST",
+      `/business/invoices/${invoiceId}/apply-credit`,
+      { amount },
+      headers
+    );
+
+    if (response.status !== 200) {
+      this.ctx.logger.warn("Frontend: Credit application failed on backend", response.body);
+      throw new Error(response.body.message || response.body.error || "Credit Application Failed");
+    }
+
+    this.ctx.logger.info("Frontend: Credit application resolved successfully.");
+    return response.body;
+  }
+
   public async simulateWebhook(
     gatewayReference: string,
     success: boolean,

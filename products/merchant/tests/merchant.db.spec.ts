@@ -389,6 +389,79 @@ describe("ACOS Merchant — Track D3 Real PostgreSQL Validation Suite", () => {
     expect(await prisma.refund.count({ where: { paymentId: payment.id } })).toBe(2);
   });
 
+  it("should persist customer credit applied to a second outstanding invoice", async () => {
+    if (!isDbAvailable) {
+      return;
+    }
+
+    const email = `credit_apply_${Date.now()}@example.com`;
+    await frontend.signUp(email, "password123", "Credit Merchant");
+    await frontend.login(email, "password123");
+    await frontend.onboardBusiness("Credit Shop", `credit-shop-${Date.now()}`, "USD");
+
+    const customer = await frontend.createCustomer({
+      name: "Credit Cleo",
+      customerNumber: `CUST-CREDIT-${Date.now()}`,
+      primaryContact: { name: "Credit Cleo", email: "cleo@example.com" },
+      billingAddress: { line1: "4 Surplus Way", city: "Metropolis", state: "NY", country: "USA", postalCode: "10001" }
+    });
+
+    const invoiceA = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-A-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "First project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoiceA.id);
+    await frontend.sendInvoice(invoiceA.id);
+
+    // 200 collected against a 100 invoice: 100 settles as customer credit.
+    const payment = await frontend.collectPayment(invoiceA.id, 200);
+    const prisma = (boundary as any).prismaClient;
+    const dbPayment = await prisma.payment.findFirst({ where: { invoiceId: invoiceA.id } });
+    await frontend.simulateWebhook(dbPayment.gatewayReference, true);
+
+    expect((await frontend.getInvoice(invoiceA.id)).status).toBe("OVERPAID");
+    let credit = await prisma.receivableCredit.findFirst({ where: { settlementId: payment.id } });
+    expect(credit.remainingAmount.toNumber()).toBe(100);
+
+    const invoiceB = await frontend.createInvoice({
+      customerId: customer.id,
+      invoiceNumber: `INV-CREDIT-B-${Date.now()}`,
+      currency: "USD",
+      paymentTerms: "NET_30",
+      issueDate: new Date().toISOString(),
+      dueDate: new Date(Date.now() + 86400000).toISOString(),
+      lines: [{ description: "Second project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+    });
+    await frontend.issueInvoice(invoiceB.id);
+    await frontend.sendInvoice(invoiceB.id);
+
+    const first = await frontend.applyCreditToInvoice(invoiceB.id, 50);
+    expect(first.amountApplied).toBe(50);
+    expect(first.invoiceStatus).toBe("PARTIALLY_PAID");
+    expect((await frontend.getInvoice(invoiceB.id)).status).toBe("PARTIALLY_PAID");
+
+    credit = await prisma.receivableCredit.findFirst({ where: { id: credit.id } });
+    expect(credit.remainingAmount.toNumber()).toBe(50);
+    let arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoiceB.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(50);
+
+    // Nothing to cap against: the remaining credit settles the invoice in full.
+    const rest = await frontend.applyCreditToInvoice(invoiceB.id);
+    expect(rest.amountApplied).toBe(50);
+    expect(rest.invoiceStatus).toBe("PAID");
+    expect((await frontend.getInvoice(invoiceB.id)).status).toBe("PAID");
+
+    credit = await prisma.receivableCredit.findFirst({ where: { id: credit.id } });
+    expect(credit.remainingAmount.toNumber()).toBe(0);
+    arEntry = await prisma.receivableEntry.findFirst({ where: { invoiceId: invoiceB.id } });
+    expect(arEntry.remainingAmount.toNumber()).toBe(0);
+  });
+
   it("should persist an asynchronous refund request and settle it from the webhook", async () => {
     if (!isDbAvailable) {
       return;
