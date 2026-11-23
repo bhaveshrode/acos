@@ -8,11 +8,11 @@ Autonomous Commerce OS (ACOS) is an enterprise-grade, domain-driven commerce ope
 
 ACOS consists of several authoritative, core business capabilities:
 
-1.  **Identity Subsystem**: Authenticates merchant users, securely hashes credentials (via `bcryptjs`), and issues cryptographic JSON Web Tokens (JWT).
+1.  **Identity Subsystem**: Authenticates merchant users, securely hashes credentials (via `bcryptjs`), and issues session tokens that the merchant app delivers as an `HttpOnly`, `SameSite=Lax` `session_token` cookie.
 2.  **Organization Subsystem**: Manages tenant parameters, default currencies, corporate details, and financial boundary zones.
 3.  **Customer Subsystem**: Tracks business contacts, invoicing addresses, and communication preferences.
 4.  **Invoice Subsystem**: Orchestrates the financial invoice document lifecycles (transitioning from `DRAFT ──► ISSUED ──► SENT ──► PAID / PARTIALLY_PAID / OVERPAID`).
-5.  **Payment Subsystem**: Initiates transaction collections, manages gateway references (Sandbox), and registers transactional settlements.
+5.  **Payment Subsystem**: Initiates transaction collections, manages gateway references (sandbox simulator or Razorpay, selected by `PAYMENT_PROVIDER`), and registers transactional settlements.
 6.  **Accounts Receivable**: Double-entry general ledger tracking allocations, outstanding debts, and customer overpayment credits.
 7.  **Reconciliation Engine**: Asynchronously matches incoming gateway transaction webhooks to outstanding customer invoice balances.
 
@@ -57,12 +57,12 @@ ACOS features exhaustive automated validation suites powered by **Vitest**:
     cd backend
     npm test
     ```
-*   To run all **Frontend** tests:
+*   To run all **Runtime** tests:
     ```bash
-    cd frontend
+    cd runtime
     npm test
     ```
-*   To run all **Merchant Application** integration and E2E E2E tests:
+*   To run all **Merchant Application** integration and E2E tests:
     ```bash
     cd products/merchant
     npm test

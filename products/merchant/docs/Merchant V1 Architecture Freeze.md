@@ -10,7 +10,7 @@ The repository decouples the core ACOS OS kernel from external consumer product 
 ```
 ACOS/
 ├── backend/            # ACOS OS Core Subsystems & Domain Layer
-├── frontend/           # ACOS OS Core Admin UI Subsystem
+├── runtime/            # Subsystem bootstrap, composition and health checks
 └── products/
     └── merchant/       # Decoupled Merchant-Facing Client Application
         ├── src/        # Product Controller & Integration Boundary
@@ -35,14 +35,14 @@ Owns all business-domain logic, state engines, structural validations, and trans
 * **Identity Subsystem**: Validates and stores credentials, maps user permissions.
 * **Organization Subsystem**: Establishes merchant corporate and financial tenant boundaries.
 * **Invoice Subsystem**: Manages invoice lifecycles (DRAFT -> ISSUED -> SENT -> PAID).
-* **Payment Subsystem**: Processes payment collection requests and sandbox confirmations.
+* **Payment Subsystem**: Processes payment collection requests and gateway confirmations (sandbox simulator or Razorpay).
 * **Accounts Receivable**: Maintains double-entry allocations and ledger records.
 * **Reconciliation Engine**: Matches and verifies confirmed payments to open invoice obligations.
 
 ---
 
 ## 3. ACOS Integration Boundary
-The integration boundary isolates Merchant logic from domain-level complexities inside the ACOS runtime. All communications pass through [AcosIntegrationBoundary.ts](file:///d:/Blockchain_Projects/Autonomous%20Commerce%20OS%20%28ACOS%29/products/merchant/src/integration/AcosIntegrationBoundary.ts):
+The integration boundary isolates Merchant logic from domain-level complexities inside the ACOS runtime. All communications pass through [AcosIntegrationBoundary.ts](../src/integration/AcosIntegrationBoundary.ts):
 
 ```
 Merchant Controller
