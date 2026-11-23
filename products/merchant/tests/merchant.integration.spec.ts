@@ -1193,7 +1193,8 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         });
         await localBoundary.issueInvoice(user.id, second.id);
         await localBoundary.sendInvoice(user.id, second.id);
-        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(100);
+        // The ledger books an obligation when money moves, not at send time.
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
 
         const applied = await localBoundary.applyCreditToInvoice(user.id, second.id, 50);
         expect(applied.amountApplied).toBe(50);
