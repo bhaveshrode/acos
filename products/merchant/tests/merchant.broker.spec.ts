@@ -283,7 +283,7 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     }
   });
 
-  it("rebuilds its consumer group instead of stalling when the group disappears", async () => {
+  it("replays retained events after its consumer group disappears", async () => {
     if (!isBrokerAvailable) return;
 
     const streamName = `${namespace}.regroup`;
@@ -291,23 +291,44 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
     const received: string[] = [];
     const busA = createBus(streamName, "regroup-a");
     const busB = createBus(streamName, replicaId);
+    let releaseFirst: () => void = () => undefined;
 
     try {
       await busA.start();
       await busB.start();
-      busB.subscribe("BrokerRegroupProbe", handlerFor(received));
 
-      // A vanished group used to make the read loop retry `NOGROUP` forever,
-      // silently stranding every later event.
+      // The first handler holds the read loop inside handleEntry, so the group is
+      // destroyed and the next event published before recovery can run. Recovery
+      // starting at "$" would then skip the retained event; only a replay from
+      // "0" delivers it.
+      const firstDeliveryStarted = new Promise<void>((resolveStarted) => {
+        busB.subscribe("BrokerRegroupProbe", {
+          handle: async (event: any) => {
+            received.push(event.eventName);
+            if (received.length === 1) {
+              resolveStarted();
+              await new Promise<void>((release) => {
+                releaseFirst = release;
+              });
+            }
+          }
+        } as any);
+      });
+
+      await busA.publish(makeEvent("BrokerRegroupProbe"));
+      await firstDeliveryStarted;
+
       await probe!.xgroup("DESTROY", streamName, brokerConsumerGroup(replicaId));
-
       await busA.publish(makeEvent("BrokerRegroupProbe"));
-      await waitFor(() => received.length === 1);
 
-      await busA.publish(makeEvent("BrokerRegroupProbe"));
+      releaseFirst();
       await waitFor(() => received.length === 2);
-      expect(received).toEqual(["BrokerRegroupProbe", "BrokerRegroupProbe"]);
+
+      // The replay must not re-dispatch the event that was already handled.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(received).toHaveLength(2);
     } finally {
+      releaseFirst();
       await busA.close();
       await busB.close();
     }
@@ -401,10 +422,9 @@ describe("ACOS Merchant — Broker Transport Suite", () => {
           const id = matchingId;
           if (id) {
             const detail = (await (probe! as any).xpending(
-              streamName, groupName, "-", "+", 10
+              streamName, groupName, id, id, 1
             )) as any[];
-            const pendingIds = new Set((detail ?? []).map((entry: any) => String(entry?.[0])));
-            parts.push(`matching entry pending=${pendingIds.has(id)}`);
+            parts.push(`matching entry pending=${(detail ?? []).length > 0}`);
           }
         } catch (err: any) {
           parts.push(`pending detail unreadable: ${err?.message ?? err}`);
