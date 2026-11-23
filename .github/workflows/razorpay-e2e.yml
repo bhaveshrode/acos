@@ -1,7 +1,8 @@
 name: Razorpay Inbound E2E
 
 # Manual dispatch only: this job waits for a human to pay a real test-mode
-# Payment Link, so it never runs on push or pull request events.
+# Payment Link and then refunds it, so it never runs on push or pull request
+# events.
 on:
   workflow_dispatch:
 
@@ -9,7 +10,7 @@ jobs:
   inbound-e2e:
     name: Razorpay Inbound E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     services:
       postgres:
@@ -52,8 +53,9 @@ jobs:
           test -n "$RAZORPAY_WEBHOOK_SECRET" || { echo "::error::RAZORPAY_WEBHOOK_SECRET secret is missing"; exit 1; }
 
       # Publishes the service on a public HTTPS hostname so Razorpay can deliver
-      # payment_link.paid. Quick tunnels get a new hostname per run, which is why
-      # the URL is printed before the payment step.
+      # payment_link.paid, refund.processed and refund.failed. Quick tunnels get
+      # a new hostname per run, which is why the URL is printed before the
+      # payment step.
       - name: Start public tunnel
         run: |
           curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
@@ -77,7 +79,7 @@ jobs:
           {
             echo "### Webhook URL"
             echo ""
-            echo "Paste this into the Razorpay webhook (test mode), subscribed to payment_link.paid:"
+            echo "Paste this into the Razorpay webhook (test mode), subscribed to payment_link.paid, refund.processed and refund.failed:"
             echo ""
             echo '```'
             echo "https://$HOST/payments/webhook"
@@ -101,7 +103,7 @@ jobs:
           RAZORPAY_E2E_PHASE: create
         run: npm run test --workspace=acos-merchant -- merchant.razorpay.inbound
 
-      - name: Pay the printed link and wait for the webhook
+      - name: Pay the printed link, then wait for the refund webhook
         env:
           RAZORPAY_E2E_PHASE: wait
         run: npm run test --workspace=acos-merchant -- merchant.razorpay.inbound
