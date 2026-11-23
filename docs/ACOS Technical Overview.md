@@ -1,6 +1,6 @@
 # ACOS — Technical Overview
 
-**Autonomous Commerce OS** is a domain-driven commerce kernel and runtime, validated by a merchant application built on top of it. It provides explicit domain boundaries, transactional consistency, durable event delivery, a double-entry accounts-receivable ledger, and a payment integration that is exercised against a real gateway.
+**Autonomous Commerce OS** is a domain-driven commerce kernel and runtime, validated by a merchant application built on top of it. It provides explicit domain boundaries, transactional consistency, durable event delivery, an accounts-receivable subledger for invoice obligations, credits, and payment applications, and a payment integration that is exercised against a real gateway.
 
 | | |
 | :--- | :--- |
@@ -53,7 +53,7 @@ Capabilities are validated rather than assumed. Every repository state change th
 - **Transactional consistency.** A command writes its aggregate and its outbox events inside one transaction. Draining happens only after commit. Multi-aggregate payment work — confirmation, allocation, receivable posting, refund reversal — commits or rolls back as one unit, with gateway calls kept outside the transaction.
 - **Durable events.** Domain events are data, not callbacks. Serialization, hydration, versioning and replay behaviour are treated as part of the contract.
 - **Idempotency.** Retries are normal. Duplicate HTTP requests, duplicate webhook deliveries and duplicate refund settlements must not produce duplicate business effects.
-- **Deterministic time.** Domain code obtains time through `Clock`, never `new Date()`, so tests can freeze or advance it.
+- **Time.** A `Clock` port with `SystemClock` and `TestClock` implementations exists in the foundation; aggregate timestamps currently read system time directly, so tests do not freeze every timestamp.
 - **Fail-closed composition.** A boundary started without a database refuses to start unless the caller explicitly opts into in-memory repositories; a boundary started without a broker refuses to start unless the caller explicitly opts into the in-process bus.
 
 ---
@@ -119,7 +119,7 @@ The application entry point currently exposes use cases for identity, organizati
 | Layer / concern | Technology / pattern |
 | :--- | :--- |
 | Language | TypeScript (ES modules) |
-| Runtime / API | Node.js 18+ (CI runs Node 20) + Express 5 |
+| Runtime / API | Node.js 20.19+, 22.12+, or 24.0+ (CI runs Node 20) + Express 5 |
 | Persistence | PostgreSQL 14+ (CI runs 15) + Prisma Client 7.9 |
 | Broker | Redis 7 Streams (optional at runtime, required for cross-replica delivery) |
 | Architecture | DDD + CQRS + Mediator + Hexagonal + event-driven integration |

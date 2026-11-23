@@ -195,7 +195,7 @@
 
     <rect x="354" y="1458" width="722" height="70" rx="14" fill="#1A1733" stroke="#3A3560"/>
     <text x="374" y="1486" font-size="18" font-weight="700" fill="#C4B5FD">Accounts receivable</text>
-    <text x="374" y="1512" font-size="15" fill="#9E9AC8">double-entry ledger · customer credit · applications · collection actions</text>
+    <text x="374" y="1512" font-size="15" fill="#9E9AC8">receivable subledger · customer credit · applications · collection actions</text>
 
     <rect x="354" y="1542" width="722" height="52" rx="14" fill="#101B2E" stroke="#22314A"/>
     <text x="374" y="1574" font-size="16" fill="#A6B6CC">Money = integer minor units + ISO 4217 exponent</text>
