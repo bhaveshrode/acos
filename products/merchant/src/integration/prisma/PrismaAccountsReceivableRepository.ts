@@ -163,7 +163,8 @@ export class PrismaAccountsReceivableRepository implements IAccountsReceivableRe
         invoiceId: application.invoiceId,
         amount: application.amount.toNumber(),
         currency: application.currency,
-        appliedAt: application.appliedAt
+        appliedAt: application.appliedAt,
+        fundedByCredit: application.fundedByCredit ?? false
       })),
       customerCredits: row.credits.map((credit: any) => ({
         id: credit.id,

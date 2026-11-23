@@ -29,6 +29,7 @@ import {
   Invoice,
   InvoiceId,
   InvoiceNumber,
+  InvoiceStatus,
   issueInvoice as issueInvoiceOperation,
   markInvoiceSent,
   recordPayment,
@@ -52,9 +53,9 @@ import {
   openReceivableAccount,
   registerInvoiceObligation,
   applyReceivablePayment,
-  applyRefund,
   applyCustomerCredit,
   refundCustomerCredit,
+  reverseSettlementApplications,
   getReceivableCreditBalance,
   requestRefund,
   completeRefund,
@@ -2175,29 +2176,41 @@ export class AcosIntegrationBoundary {
       addInvoiceRefund(invoice, share.amount.amount);
     }
 
-    // 2. Re-open the obligations the payment actually settled.
-    let remainingRefund = remainderMoney.amount;
-    for (const allocation of payment.allocations) {
-      // Refund requests are payment-level; distribute the refunded value
-      // across allocations (the persisted merchant payment has one).
-      const allocationRefund = Math.min(remainingRefund, allocation.allocatedAmount.amount);
-      if (allocationRefund <= 0) break;
-      remainingRefund -= allocationRefund;
-
-      const invoice = await this.loadReversalInvoice(
-        payment,
-        allocation.invoiceId,
-        allocation.allocatedAmount.currency,
-        anchorInvoice.customerId
+    // 2. Return money the payment applied to invoice obligations, including
+    // credit a later application moved onto another invoice. The ledger knows
+    // every application by settlement, so the right invoices re-open.
+    if (remainderMoney.amount > 0) {
+      const reversalRes = reverseSettlementApplications(
+        ar,
+        new SettlementId(payment.id.value),
+        remainderMoney
       );
-
-      const applyRes = applyRefund(ar, invoice.id, Money.create(allocationRefund, currency).value);
-      if (applyRes.isFailure) {
-        throw new Error(`Accounts Receivable refund rejected: ${applyRes.error.message}`);
+      if (reversalRes.isFailure) {
+        throw new Error(`Accounts Receivable refund rejected: ${reversalRes.error.message}`);
       }
-      arDirty = true;
-
-      addInvoiceRefund(invoice, allocationRefund);
+      const { reversed, remainder, shares: appliedShares } = reversalRes.value;
+      if (remainder.amount > 0) {
+        // Credit spent before applications were recorded has no ledger target,
+        // so part of the refund cannot be attributed. The gateway has already
+        // returned the money: failing here would roll the reversal back and
+        // leave the refund stuck in APPROVED across every re-delivery.
+        this.logger.warn(
+          "refundPayment: Refund amount could not be attributed to a receivable application; leaving it unreconciled.",
+          { paymentId: payment.id.value, amount: remainder.amount, currency }
+        );
+      }
+      if (reversed.amount > 0) {
+        arDirty = true;
+      }
+      for (const share of appliedShares) {
+        const invoice = await this.loadReversalInvoice(
+          payment,
+          share.invoiceId,
+          currency,
+          anchorInvoice.customerId
+        );
+        addInvoiceRefund(invoice, share.amount.amount);
+      }
     }
 
     if (arDirty) {
@@ -2208,7 +2221,18 @@ export class AcosIntegrationBoundary {
     }
 
     for (const { invoice, amount: invoiceRefund } of refundedByInvoice.values()) {
-      await this.recordInvoiceRefund(payment, invoice, Money.create(invoiceRefund, invoice.currency).value);
+      await this.recordInvoiceRefund(payment, ar, invoice, Money.create(invoiceRefund, invoice.currency).value);
+    }
+
+    // When the refund recalled credit from another invoice, the payment's own
+    // invoice is absent from the ledger pass, yet the refund lowered what this
+    // payment leaves paid on it: an overpayment turns back into a paid invoice.
+    // Re-derive its status without recording a second refund against it.
+    if (
+      anchorInvoice.status === InvoiceStatus.OVERPAID &&
+      !refundedByInvoice.has(anchorInvoice.id.value)
+    ) {
+      await this.refreshInvoiceSettlement(payment, ar, anchorInvoice);
     }
     this.logger.info("refundPayment: Reversal reconciliation completed successfully.");
   }
@@ -2241,8 +2265,34 @@ export class AcosIntegrationBoundary {
     return invoice;
   }
 
-  private async recordInvoiceRefund(payment: Payment, invoice: Invoice, refunded: Money): Promise<void> {
-    // Update Invoice Obligation Status from cumulative net payments.
+  /**
+   * Net amount an invoice still holds paid after refunds. The receivable entry
+   * is authoritative once it exists: it tracks both payment allocations and
+   * credit settlements, and a recall of credit-funded money lowers it even
+   * though the payment rows still name the invoice. The entry cannot exceed the
+   * invoice total, so overpayment still sitting as customer credit booked
+   * against this invoice is added back on top of it.
+   */
+  private async netPaidFor(payment: Payment, ar: AccountsReceivable, invoice: Invoice): Promise<number> {
+    const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+    if (entry) {
+      const settled = entry.originalAmount.amount - entry.remainingBalance.amount;
+      // Overpayment only sits on top of a fully settled obligation: while the
+      // entry is open, credit booked against this invoice is separate money the
+      // customer can still apply to it, not payment for it.
+      if (entry.remainingBalance.amount > 0) {
+        return settled;
+      }
+      const unappliedCredit = ar.customerCredits
+        .filter(
+          (credit) =>
+            credit.invoiceId?.equals(invoice.id) &&
+            credit.remainingBalance.currency === invoice.currency
+        )
+        .reduce((sum, credit) => sum + credit.remainingBalance.amount, 0);
+      return settled + unappliedCredit;
+    }
+
     const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
     let cumulativePaid = 0;
     let cumulativeRefunded = 0;
@@ -2274,8 +2324,16 @@ export class AcosIntegrationBoundary {
         }
       }
     }
+    return cumulativePaid - cumulativeRefunded;
+  }
 
-    const netPaid = cumulativePaid - cumulativeRefunded;
+  private async recordInvoiceRefund(
+    payment: Payment,
+    ar: AccountsReceivable,
+    invoice: Invoice,
+    refunded: Money
+  ): Promise<void> {
+    const netPaid = await this.netPaidFor(payment, ar, invoice);
     const recordRes = recordRefund(invoice, refunded, Money.create(netPaid, invoice.currency).value);
     if (recordRes.isFailure) {
       throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
@@ -2288,6 +2346,27 @@ export class AcosIntegrationBoundary {
     // Publish ACOS invoice refund events (e.g. InvoiceRefunded)
     if (invoice.domainEvents.length > 0) {
       this.logger.info(`Publishing ACOS invoice refund events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
+      await this.eventBus.publishAll(invoice.domainEvents);
+      invoice.clearDomainEvents();
+    }
+  }
+
+  /** Re-derives an invoice's settlement status without recording a refund on it. */
+  private async refreshInvoiceSettlement(
+    payment: Payment,
+    ar: AccountsReceivable,
+    invoice: Invoice
+  ): Promise<void> {
+    const netPaid = await this.netPaidFor(payment, ar, invoice);
+    const syncRes = invoice.syncSettlementStatus(Money.create(netPaid, invoice.currency).value);
+    if (syncRes.isFailure) {
+      throw new Error(`Invoice settlement status refresh failed: ${syncRes.error.message}`);
+    }
+    const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+    if (invoiceSaveRes.isFailure) {
+      throw new Error(`Failed to save refreshed invoice: ${invoiceSaveRes.error.message}`);
+    }
+    if (invoice.domainEvents.length > 0) {
       await this.eventBus.publishAll(invoice.domainEvents);
       invoice.clearDomainEvents();
     }
@@ -2490,14 +2569,53 @@ export class AcosIntegrationBoundary {
     if (orgRes.isFailure) throw new Error("Organization not found");
     const currency = orgRes.value.settings.defaultCurrency.value;
 
-    let totalOutstanding = 0;
+    const ledgerAccounts: AccountsReceivable[] = [];
+    if ("items" in this.accountsReceivableRepository) {
+      for (const ar of (this.accountsReceivableRepository as any).items.values()) {
+        if (ar.organizationId.value === orgId) {
+          ledgerAccounts.push(ar);
+        }
+      }
+    } else {
+      const prisma = (this.accountsReceivableRepository as any).prisma;
+      if (prisma) {
+        const rows = await prisma.receivableAccount.findMany({
+          where: { organizationId: orgId }
+        });
+        for (const row of rows) {
+          const res = await this.accountsReceivableRepository.findById(new ReceivableAccountId(row.id));
+          if (res.isSuccess) {
+            ledgerAccounts.push(res.value);
+          }
+        }
+      }
+    }
+
+    // The ledger records every settlement, including credit that moved no
+    // payment row, so its remaining balance is the outstanding figure.
+    const remainingByInvoice = new Map<string, number>();
     let totalCredit = 0;
+    for (const ar of ledgerAccounts) {
+      totalCredit += getReceivableCreditBalance(ar, currency).amount;
+      for (const entry of ar.entries) {
+        if (entry.remainingBalance.currency === currency) {
+          remainingByInvoice.set(entry.invoiceId.value, entry.remainingBalance.amount);
+        }
+      }
+    }
+
+    let totalOutstanding = 0;
 
     for (const inv of invoices) {
       const isSent = inv.sentAt !== null;
       if (inv.status === "ISSUED" && isSent) {
         totalOutstanding += inv.grandTotal.amount;
       } else if (inv.status === "PARTIALLY_PAID") {
+        const ledgerRemaining = remainingByInvoice.get(inv.id.value);
+        if (ledgerRemaining !== undefined) {
+          totalOutstanding += Math.max(0, ledgerRemaining);
+          continue;
+        }
         let paidAmount = 0;
         const allPaymentsRes = await this.paymentRepository.findByInvoice(new OrganizationId(orgId), inv.id);
         if (allPaymentsRes.isSuccess) {
@@ -2512,27 +2630,6 @@ export class AcosIntegrationBoundary {
           }
         }
         totalOutstanding += Math.max(0, inv.grandTotal.amount - paidAmount);
-      }
-    }
-
-    if ("items" in this.accountsReceivableRepository) {
-      for (const ar of (this.accountsReceivableRepository as any).items.values()) {
-        if (ar.organizationId.value === orgId) {
-          totalCredit += getReceivableCreditBalance(ar, currency).amount;
-        }
-      }
-    } else {
-      const prisma = (this.accountsReceivableRepository as any).prisma;
-      if (prisma) {
-        const rows = await prisma.receivableAccount.findMany({
-          where: { organizationId: orgId }
-        });
-        for (const row of rows) {
-          const res = await this.accountsReceivableRepository.findById(new ReceivableAccountId(row.id));
-          if (res.isSuccess) {
-            totalCredit += res.value.getCreditBalance(currency).amount;
-          }
-        }
       }
     }
 

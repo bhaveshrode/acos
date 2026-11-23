@@ -99,6 +99,7 @@ export { applyRefund } from "../business/accounts_receivable/operations/ApplyRef
 export { applyReceivablePayment } from "../business/accounts_receivable/operations/ApplyReceivablePayment.js";
 export { getReceivableCreditBalance } from "../business/accounts_receivable/operations/GetReceivableCreditBalance.js";
 export { refundCustomerCredit } from "../business/accounts_receivable/operations/RefundCustomerCredit.js";
+export { reverseSettlementApplications } from "../business/accounts_receivable/operations/ReverseSettlementApplications.js";
 export { openReceivableAccount } from "../business/accounts_receivable/operations/OpenReceivableAccount.js";
 export { registerInvoiceObligation } from "../business/accounts_receivable/operations/RegisterInvoiceObligation.js";
 export type { IAccountsReceivableRepository } from "../business/accounts_receivable/repositories/IAccountsReceivableRepository.js";

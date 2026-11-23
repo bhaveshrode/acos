@@ -1339,6 +1339,52 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
       }
     });
 
+    it("recalls applied credit from the invoice that spent it when the overpayment is refunded", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(
+          localBoundary,
+          "credit-refund-shop",
+          100,
+          150
+        );
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(50);
+
+        const second = await localBoundary.createInvoice(user.id, {
+          organizationId: org.id,
+          customerId: customer.id,
+          invoiceNumber: "INV-CREDIT-REFUND-002",
+          currency: "USD",
+          paymentTerms: "NET_30",
+          issueDate: new Date().toISOString(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          lines: [{ description: "Second project", quantity: 1, unitPrice: 100, taxRate: 0 }]
+        });
+        await localBoundary.issueInvoice(user.id, second.id);
+        await localBoundary.sendInvoice(user.id, second.id);
+
+        // The overpayment's credit settles half of the second invoice.
+        const applied = await localBoundary.applyCreditToInvoice(user.id, second.id, 50);
+        expect(applied.invoiceStatus).toBe("PARTIALLY_PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(50);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
+
+        // Refunding that money recalls it from the invoice the credit paid,
+        // not from the invoice the payment settled directly.
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 50, "Return the overpayment");
+        expect(refunded.status).toBe("CONFIRMED");
+
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readInvoiceStatus(localBoundary, second.id)).toBe("ISSUED");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(100);
+        expect(await readCredit(localBoundary, org.id, customer.id)).toBe(0);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
+
     it("settles an invoice with the remaining credit and refuses unsent invoices", async () => {
       const provider = new DeferredRefundProvider();
       const localBoundary = await buildLocalBoundary(provider);

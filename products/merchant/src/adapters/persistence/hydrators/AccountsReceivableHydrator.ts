@@ -51,7 +51,8 @@ export class AccountsReceivableHydrator {
               settlementId: new SettlementId(application.settlementId),
               invoiceId: new InvoiceId(application.invoiceId),
               appliedAmount: Money.create(application.amount, application.currency).value,
-              appliedAt: application.appliedAt
+              appliedAt: application.appliedAt,
+              fundedByCredit: application.fundedByCredit
             })
         ),
         customerCredits: snapshot.customerCredits.map(
