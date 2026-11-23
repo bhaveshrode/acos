@@ -1075,6 +1075,36 @@ describe("Merchant Core Integration Spec Suite (Phase 5 Combined)", () => {
         await localBoundary.disconnect();
       }
     });
+
+    it("rejects an over-refund before the gateway is called", async () => {
+      const provider = new DeferredRefundProvider();
+      provider.refundStatus = "SUCCEEDED";
+      const localBoundary = await buildLocalBoundary(provider);
+      try {
+        const { user, org, customer, invoice, payment } = await setupConfirmedPayment(localBoundary, "cap-shop");
+
+        // 600 exceeds the 500 payment: the guard fires before any gateway I/O
+        await expect(localBoundary.refundPayment(user.id, payment.id, 600, "Too much")).rejects.toThrow(
+          /cannot exceed payment amount/
+        );
+        expect(provider.refunds).toHaveLength(0);
+
+        // Nothing moved on the payment aggregate or the ledger
+        const { PaymentId } = await import("acos-backend");
+        const reloaded = await localBoundary.paymentRepository.findById(PaymentId.from(payment.id));
+        expect(reloaded.value.status).toBe("CONFIRMED");
+        expect(reloaded.value.refundRequests).toHaveLength(0);
+        expect(await readInvoiceStatus(localBoundary, invoice.id)).toBe("PAID");
+        expect(await readOutstanding(localBoundary, org.id, customer.id)).toBe(0);
+
+        // The full amount within the cap still goes through
+        const refunded = await localBoundary.refundPayment(user.id, payment.id, 500, "Within cap");
+        expect(refunded.status).toBe("REFUNDED");
+        expect(provider.refunds).toHaveLength(1);
+      } finally {
+        await localBoundary.disconnect();
+      }
+    });
   });
 
   describe("Event-Driven Merchant Updates (Phase 7)", () => {

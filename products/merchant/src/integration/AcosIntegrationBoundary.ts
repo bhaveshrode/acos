@@ -59,6 +59,7 @@ import {
   rejectRefund,
   recordRefund,
   RefundStatus,
+  PaymentStatus,
   IEventBus
 } from "acos-backend";
 import { JwtTokenProvider } from "../adapters/security/JwtTokenProvider.js";
@@ -1479,6 +1480,8 @@ export class AcosIntegrationBoundary {
       throw new Error("Refund amount must be a positive number.");
     }
 
+    this.assertRefundAllowed(existing, amount);
+
     // Minted up front so the provider can echo it back in gateway notes and
     // asynchronous refund webhooks can be matched to this exact request.
     const refundId = new UniqueEntityID();
@@ -1543,6 +1546,25 @@ export class AcosIntegrationBoundary {
 
     const mapper = new PaymentMapper();
     return mapper.map(payment);
+  }
+
+  /**
+   * Pre-flight mirror of the kernel's refund guards. The authoritative check
+   * still runs in-transaction via requestRefund, but this one runs before the
+   * gateway call so an over-refund can never move real money and then fail.
+   */
+  private assertRefundAllowed(payment: Payment, amount: number): void {
+    if (payment.status !== PaymentStatus.CONFIRMED && payment.status !== PaymentStatus.REFUND_REQUESTED) {
+      throw new Error("Refunds can only be requested on confirmed payments.");
+    }
+
+    const activeRefundTotal = payment.refundRequests.reduce(
+      (total, refund) => (refund.status === RefundStatus.REJECTED ? total : total + refund.amount.amount),
+      0
+    );
+    if (amount + activeRefundTotal > payment.amount.amount) {
+      throw new Error("Refund requests total cannot exceed payment amount.");
+    }
   }
 
   /**
