@@ -260,7 +260,7 @@ describe("Accounts Receivable Bounded Context Unit Tests", () => {
       expect(ar.paymentApplications).toHaveLength(2);
     });
 
-    it("should reverse a settlement's applications invoice by invoice, most recent first", () => {
+    it("should reverse a settlement's credit-funded applications before its own money", () => {
       const ar = AccountsReceivable.create(accId, orgId, custId).value;
       const invA = InvoiceId.generate();
       const invB = InvoiceId.generate();

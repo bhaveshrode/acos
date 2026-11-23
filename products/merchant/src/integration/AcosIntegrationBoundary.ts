@@ -2208,16 +2208,6 @@ export class AcosIntegrationBoundary {
       }
     }
 
-    // When the refund recalled credit from another invoice, the payment's own
-    // invoice is not in the ledger pass, yet the refund lowered what this
-    // payment leaves paid on it: an overpayment turns back into a paid invoice.
-    if (
-      anchorInvoice.status === InvoiceStatus.OVERPAID &&
-      !refundedByInvoice.has(anchorInvoice.id.value)
-    ) {
-      refundedByInvoice.set(anchorInvoice.id.value, { invoice: anchorInvoice, amount });
-    }
-
     if (arDirty) {
       const arSaveRes = await this.accountsReceivableRepository.save(ar);
       if (arSaveRes.isFailure) {
@@ -2227,6 +2217,17 @@ export class AcosIntegrationBoundary {
 
     for (const { invoice, amount: invoiceRefund } of refundedByInvoice.values()) {
       await this.recordInvoiceRefund(payment, ar, invoice, Money.create(invoiceRefund, invoice.currency).value);
+    }
+
+    // When the refund recalled credit from another invoice, the payment's own
+    // invoice is absent from the ledger pass, yet the refund lowered what this
+    // payment leaves paid on it: an overpayment turns back into a paid invoice.
+    // Re-derive its status without recording a second refund against it.
+    if (
+      anchorInvoice.status === InvoiceStatus.OVERPAID &&
+      !refundedByInvoice.has(anchorInvoice.id.value)
+    ) {
+      await this.refreshInvoiceSettlement(payment, ar, anchorInvoice);
     }
     this.logger.info("refundPayment: Reversal reconciliation completed successfully.");
   }
@@ -2259,13 +2260,27 @@ export class AcosIntegrationBoundary {
     return invoice;
   }
 
-  private async recordInvoiceRefund(
-    payment: Payment,
-    ar: AccountsReceivable,
-    invoice: Invoice,
-    refunded: Money
-  ): Promise<void> {
-    // Update Invoice Obligation Status from cumulative net payments.
+  /**
+   * Net amount an invoice still holds paid after refunds. The receivable entry
+   * is authoritative once it exists: it tracks both payment allocations and
+   * credit settlements, and a recall of credit-funded money lowers it even
+   * though the payment rows still name the invoice. The entry cannot exceed the
+   * invoice total, so overpayment still sitting as customer credit booked
+   * against this invoice is added back on top of it.
+   */
+  private async netPaidFor(payment: Payment, ar: AccountsReceivable, invoice: Invoice): Promise<number> {
+    const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
+    if (entry) {
+      const unappliedCredit = ar.customerCredits
+        .filter(
+          (credit) =>
+            credit.invoiceId?.equals(invoice.id) &&
+            credit.remainingBalance.currency === invoice.currency
+        )
+        .reduce((sum, credit) => sum + credit.remainingBalance.amount, 0);
+      return entry.originalAmount.amount - entry.remainingBalance.amount + unappliedCredit;
+    }
+
     const allPaymentsRes = await this.paymentRepository.findByInvoice(invoice.organizationId, invoice.id);
     let cumulativePaid = 0;
     let cumulativeRefunded = 0;
@@ -2297,15 +2312,16 @@ export class AcosIntegrationBoundary {
         }
       }
     }
+    return cumulativePaid - cumulativeRefunded;
+  }
 
-    // Credit applied to the invoice moves no payment row, so the payment sums
-    // under-count what its ledger entry still holds settled. The larger view
-    // is the net paid total, matching the collection reconciliation.
-    const entry = ar.entries.find((candidate) => candidate.invoiceId.equals(invoice.id));
-    const settledByLedger = entry
-      ? entry.originalAmount.amount - entry.remainingBalance.amount
-      : 0;
-    const netPaid = Math.max(cumulativePaid - cumulativeRefunded, settledByLedger);
+  private async recordInvoiceRefund(
+    payment: Payment,
+    ar: AccountsReceivable,
+    invoice: Invoice,
+    refunded: Money
+  ): Promise<void> {
+    const netPaid = await this.netPaidFor(payment, ar, invoice);
     const recordRes = recordRefund(invoice, refunded, Money.create(netPaid, invoice.currency).value);
     if (recordRes.isFailure) {
       throw new Error(`Invoice obligation status update failed: ${recordRes.error.message}`);
@@ -2318,6 +2334,27 @@ export class AcosIntegrationBoundary {
     // Publish ACOS invoice refund events (e.g. InvoiceRefunded)
     if (invoice.domainEvents.length > 0) {
       this.logger.info(`Publishing ACOS invoice refund events to the Event Bus: ${invoice.domainEvents.map(e => e.eventName).join(", ")}`);
+      await this.eventBus.publishAll(invoice.domainEvents);
+      invoice.clearDomainEvents();
+    }
+  }
+
+  /** Re-derives an invoice's settlement status without recording a refund on it. */
+  private async refreshInvoiceSettlement(
+    payment: Payment,
+    ar: AccountsReceivable,
+    invoice: Invoice
+  ): Promise<void> {
+    const netPaid = await this.netPaidFor(payment, ar, invoice);
+    const syncRes = invoice.syncSettlementStatus(Money.create(netPaid, invoice.currency).value);
+    if (syncRes.isFailure) {
+      throw new Error(`Invoice settlement status refresh failed: ${syncRes.error.message}`);
+    }
+    const invoiceSaveRes = await this.invoiceRepository.save(invoice);
+    if (invoiceSaveRes.isFailure) {
+      throw new Error(`Failed to save refreshed invoice: ${invoiceSaveRes.error.message}`);
+    }
+    if (invoice.domainEvents.length > 0) {
       await this.eventBus.publishAll(invoice.domainEvents);
       invoice.clearDomainEvents();
     }

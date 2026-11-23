@@ -336,6 +336,49 @@ export class Invoice extends AggregateRoot<InvoiceId> {
     return Result.ok();
   }
 
+  private statusFor(netPaid: number): InvoiceStatus {
+    if (netPaid >= this.grandTotal.amount) {
+      return netPaid > this.grandTotal.amount ? InvoiceStatus.OVERPAID : InvoiceStatus.PAID;
+    }
+    return netPaid > 0 ? InvoiceStatus.PARTIALLY_PAID : InvoiceStatus.ISSUED;
+  }
+
+  /**
+   * Re-derives the settlement status from the net amount still paid when the
+   * money that changed it was recalled from another invoice, so the refund
+   * itself is accounted for elsewhere and no InvoiceRefunded fires here.
+   */
+  public syncSettlementStatus(netPaid: Money): Result<void> {
+    const settledStates: InvoiceStatus[] = [
+      InvoiceStatus.PARTIALLY_PAID,
+      InvoiceStatus.PAID,
+      InvoiceStatus.OVERPAID
+    ];
+    if (!settledStates.includes(this.status)) {
+      return Result.fail(
+        ResultError.conflict(`Cannot re-derive settlement status for an invoice in ${this.status} status.`)
+      );
+    }
+    if (netPaid.currency !== this.currency) {
+      return Result.fail(
+        ResultError.conflict(
+          `Currency mismatch: Net paid currency ${netPaid.currency} does not match Invoice currency ${this.currency}.`
+        )
+      );
+    }
+    if (netPaid.amount < 0) {
+      return Result.fail(ResultError.conflict("Net paid amount cannot be negative."));
+    }
+
+    const next = this.statusFor(netPaid.amount);
+    if (next !== this.status) {
+      this.props.status = next;
+      this.props.updatedAt = new Date();
+      this.addDomainEvent(new InvoiceUpdated(this.id.value));
+    }
+    return Result.ok();
+  }
+
   /**
    * Records money returned to the payer, moving the invoice back to the status
    * its remaining net payment supports. `netPaid` is the cumulative confirmed
@@ -366,19 +409,8 @@ export class Invoice extends AggregateRoot<InvoiceId> {
       return Result.fail(ResultError.conflict("Net paid amount cannot be negative."));
     }
 
+    this.props.status = this.statusFor(netPaid.amount);
     this.props.updatedAt = new Date();
-
-    if (netPaid.amount >= this.grandTotal.amount) {
-      if (netPaid.amount > this.grandTotal.amount) {
-        this.props.status = InvoiceStatus.OVERPAID;
-      } else {
-        this.props.status = InvoiceStatus.PAID;
-      }
-    } else if (netPaid.amount > 0) {
-      this.props.status = InvoiceStatus.PARTIALLY_PAID;
-    } else {
-      this.props.status = InvoiceStatus.ISSUED;
-    }
 
     this.addDomainEvent(new InvoiceRefunded(this.id.value, amountRefunded));
     return Result.ok();
